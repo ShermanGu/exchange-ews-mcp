@@ -10,6 +10,18 @@ readme = "README.md"
 requires-python = ">=3.10"
 license = {text = "MIT"}
 authors = [{name = "Exchange EWS MCP contributors"}]
+keywords = ["exchange", "ews", "mcp", "model-context-protocol", "ntlm", "outlook"]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "License :: OSI Approved :: MIT License",
+  "Operating System :: Microsoft :: Windows",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Topic :: Communications :: Email",
+]
 dependencies = [
   "mcp[cli]>=1.27,<2",
   "requests>=2.32,<3",
@@ -21,6 +33,12 @@ dependencies = [
 
 [project.optional-dependencies]
 test = ["pytest>=8,<9"]
+
+[project.urls]
+Homepage = "https://github.com/ShermanGu/exchange-ews-mcp"
+Repository = "https://github.com/ShermanGu/exchange-ews-mcp"
+Issues = "https://github.com/ShermanGu/exchange-ews-mcp/issues"
+Changelog = "https://github.com/ShermanGu/exchange-ews-mcp/blob/main/CHANGELOG.md"
 
 [project.scripts]
 exchange-ews-mcp = "exchange_ews_mcp.cli:main"
