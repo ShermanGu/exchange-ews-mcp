@@ -32,7 +32,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-test = ["pytest>=8,<9"]
+test = ["pytest>=8,<10"]
 
 [project.urls]
 Homepage = "https://github.com/ShermanGu/exchange-ews-mcp"
