@@ -1,0 +1,38 @@
+name: Feature request / 功能建议
+description: Propose a focused improvement to the MCP workflows or Exchange support.
+title: "[Feature]: "
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem / 使用场景
+      description: What user problem should this solve?
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior / 建议方案
+      description: Describe the desired tool or workflow behavior.
+    validations:
+      required: true
+
+  - type: textarea
+    id: safety
+    attributes:
+      label: Safety and compatibility / 安全与兼容性
+      description: Explain effects on draft-first behavior, confirmation, Exchange versions, or existing tools.
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checklist / 确认
+      options:
+        - label: I searched existing issues and pull requests.
+          required: true
+        - label: I did not include confidential mailbox or organization data.
+          required: true
