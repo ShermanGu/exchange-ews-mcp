@@ -1,0 +1,23 @@
+name: Feature request
+description: Propose a focused improvement to the MCP server.
+title: "[Feature] "
+labels: [enhancement]
+body:
+  - type: textarea
+    id: use_case
+    attributes:
+      label: Use case
+      description: Describe the user workflow and why existing tools are insufficient.
+    validations:
+      required: true
+  - type: textarea
+    id: behavior
+    attributes:
+      label: Proposed behavior
+    validations:
+      required: true
+  - type: textarea
+    id: safety
+    attributes:
+      label: Safety and compatibility considerations
+      description: Consider draft-first behavior, confirmation, credentials, and Exchange compatibility.

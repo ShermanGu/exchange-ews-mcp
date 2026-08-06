@@ -1,0 +1,85 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Python ${{ matrix.python-version }}
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.11", "3.12", "3.13"]
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Install project and test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[test]"
+
+      - name: Run strict unit suite
+        env:
+          PYTEST_DISABLE_PLUGIN_AUTOLOAD: "1"
+          PYTHONWARNINGS: "error"
+        run: python -m pytest -W error::ResourceWarning
+
+      - name: Verify package metadata and tool profiles
+        run: |
+          exchange-ews-mcp version
+          exchange-ews-mcp tool-list
+          exchange-ews-mcp tool-list --profile debug
+
+  package:
+    name: Build distributions
+    runs-on: windows-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Build source and wheel distributions
+        run: |
+          python -m pip install --upgrade pip build
+          python -m build
+
+      - name: Install wheel in a clean environment
+        shell: pwsh
+        run: |
+          py -3.12 -m venv .package-check
+          .\.package-check\Scripts\python.exe -m pip install --upgrade pip
+          $wheel = Get-ChildItem dist\*.whl | Select-Object -First 1
+          .\.package-check\Scripts\python.exe -m pip install $wheel.FullName
+          .\.package-check\Scripts\exchange-ews-mcp.exe version
+          .\.package-check\Scripts\exchange-ews-mcp.exe tool-list
+
+      - name: Upload distributions
+        uses: actions/upload-artifact@v7
+        with:
+          name: exchange-ews-mcp-v0.6.14-distributions
+          path: dist/*

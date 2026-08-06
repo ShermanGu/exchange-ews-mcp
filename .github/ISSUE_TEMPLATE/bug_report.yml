@@ -1,0 +1,46 @@
+name: Bug report
+description: Report a reproducible problem without including mailbox data or secrets.
+title: "[Bug] "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Do not include passwords, mailbox content, internal hostnames, ItemId/ChangeKey values, or personal data.
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      placeholder: 0.6.14
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: Environment
+      description: Windows version, Python version, Exchange type/version if known.
+    validations:
+      required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: What happened?
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Reproduction steps
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Sanitized logs
+      description: Remove all credentials, mailbox content, addresses, IDs, and internal URLs.
