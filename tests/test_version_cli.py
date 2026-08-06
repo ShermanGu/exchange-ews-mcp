@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import json
+import os
+import subprocess
+import sys
 from pathlib import Path
 
 from exchange_ews_mcp import __version__
@@ -19,6 +23,28 @@ def test_version_command_registered() -> None:
     parser = build_parser()
     args = parser.parse_args(["version"])
     assert args.func is version_command
+
+
+def test_tool_list_reconfigures_cp1252_stdio_to_utf8() -> None:
+    env = os.environ.copy()
+    existing_pythonpath = env.get("PYTHONPATH")
+    env["PYTHONPATH"] = str(ROOT / "src") + (
+        os.pathsep + existing_pythonpath if existing_pythonpath else ""
+    )
+    env["PYTHONIOENCODING"] = "cp1252"
+
+    result = subprocess.run(
+        [sys.executable, "-m", "exchange_ews_mcp.cli", "tool-list"],
+        cwd=ROOT,
+        env=env,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr.decode("utf-8", errors="replace")
+    payload = json.loads(result.stdout.decode("utf-8"))
+    assert payload["profile"] == "production"
+    assert "Agent" in payload["recommendation"]
 
 
 def test_distribution_version_is_sourced_from_package_attribute() -> None:
