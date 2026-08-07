@@ -541,6 +541,39 @@ def calendar_get_command(args: argparse.Namespace) -> int:
     return 0
 
 
+def update_meeting_command(args: argparse.Namespace) -> int:
+    _print_json(service.update_meeting(
+        item_id=args.item_id,
+        calendar_ref=args.calendar_ref,
+        subject=args.subject,
+        body_html=_optional_body_from_args(args),
+        start=args.start,
+        end=args.end,
+        location=args.location,
+        required_attendees=(
+            _split_addresses(args.required_attendee)
+            if args.required_attendee is not None
+            else None
+        ),
+        optional_attendees=(
+            _split_addresses(args.optional_attendee)
+            if args.optional_attendee is not None
+            else None
+        ),
+        reminder_minutes=args.reminder_minutes,
+    ))
+    return 0
+
+
+def send_meeting_invitation_command(args: argparse.Namespace) -> int:
+    _print_json(service.send_meeting_invitation(
+        item_id=args.item_id,
+        calendar_ref=args.calendar_ref,
+        confirm_send=args.confirm_send,
+    ))
+    return 0
+
+
 def create_meeting_command(args: argparse.Namespace) -> int:
     _print_json(service.create_meeting(
         subject=args.subject, body_html=_body_from_args(args),
@@ -1002,6 +1035,27 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--change-key")
     p.set_defaults(func=calendar_get_command)
 
+    p = sub.add_parser("update-meeting", help="修改一个尚未发送邀请的会议")
+    identity = p.add_mutually_exclusive_group(required=True)
+    identity.add_argument("--item-id")
+    identity.add_argument("--calendar-ref")
+    p.add_argument("--subject")
+    p.add_argument("--start", help="必须与 --end 同时提供")
+    p.add_argument("--end", help="必须与 --start 同时提供")
+    p.add_argument("--location", help="传空字符串可清空地点")
+    p.add_argument("--required-attendee", action="append")
+    p.add_argument("--optional-attendee", action="append")
+    p.add_argument("--reminder-minutes", type=int)
+    _add_html_body(p, required=False)
+    p.set_defaults(func=update_meeting_command)
+
+    p = sub.add_parser("send-meeting-invitation", help="发送一个已保存但尚未发送的会议邀请")
+    identity = p.add_mutually_exclusive_group(required=True)
+    identity.add_argument("--item-id")
+    identity.add_argument("--calendar-ref")
+    p.add_argument("--confirm-send", action="store_true", required=True)
+    p.set_defaults(func=send_meeting_invitation_command)
+
     p = sub.add_parser("create-meeting", help="使用完整邮箱创建会议；默认不发送邀请")
     p.add_argument("--subject", required=True)
     p.add_argument("--start", required=True, help="ISO 8601；无偏移时按 calendar_time_zone 解释")
@@ -1080,11 +1134,11 @@ def build_parser() -> argparse.ArgumentParser:
     p.set_defaults(func=tool_list)
 
     p = sub.add_parser("mcp-config", help="输出可粘贴到 MCP 客户端的 stdio 配置")
-    p.add_argument("--debug-tools", action="store_true", help="输出完整 25 工具的调试 server 配置")
+    p.add_argument("--debug-tools", action="store_true", help="输出完整 27 工具的调试 server 配置")
     p.set_defaults(func=mcp_config)
 
     p = sub.add_parser("serve", help="启动 stdio MCP server")
-    p.add_argument("--debug-tools", action="store_true", help="暴露完整 25 个底层与高层工具")
+    p.add_argument("--debug-tools", action="store_true", help="暴露完整 27 个底层与高层工具")
     p.set_defaults(func=serve)
 
     p = sub.add_parser("reset-local", help="删除本地配置、DT 配置、状态库和已保存密码")

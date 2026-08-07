@@ -1,4 +1,4 @@
-# Exchange EWS MCP v0.6.14
+# Exchange EWS MCP v0.6.16
 
 [English](README.md) | **简体中文**
 
@@ -16,8 +16,8 @@
 
 - **完全本地运行**：MCP Server 运行在用户 Windows 电脑上，不需要中转服务。
 - **邮件草稿优先**：新建、回复、转发和周报更新只创建草稿，不自动发送。
-- **会议发送需确认**：会议邀请必须经过独立确认步骤才会发送。
-- **Agent 工具面清晰**：Production 提供 19 个工具；6 个底层写入工具仅在 Debug profile 中出现。
+- **会议发送需确认**：会议可以仅保存并继续修改；发送已保存会议邀请必须经过独立确认。
+- **Agent 工具面清晰**：Production 提供 21 个工具；6 个底层写入工具仅在 Debug profile 中出现。
 - **隐藏 Exchange 标识**：Agent 使用 `message_ref`、`draft_ref`、`calendar_ref` 和一次性流程 token，不直接处理 ItemId/ChangeKey。
 - **周报不让模型生成 HTML**：Agent 只看到压缩后的文本槽位和位置字符串；完整 HTML 始终由 Server 保存、填充和校验。
 - **复杂版面支持**：周报位置可描述合并单元格、多级表头、嵌套表格、标题、段落和列表。
@@ -131,7 +131,7 @@ EWS 底层保持 UTC 语义；适合展示给用户的结果会同时返回本�
 .\.venv\Scripts\exchange-ews-mcp.exe tool-list
 ```
 
-正式版本应为 `0.6.14`，Production 工具数量应为 `19`。
+正式版本应为 `0.6.16`，Production 工具数量应为 `21`。
 
 ## Production 工具
 
@@ -140,7 +140,7 @@ EWS 底层保持 UTC 语义；适合展示给用户的结果会同时返回本�
 | 身份与邮件读取 | `get_current_user`、`list_emails`、`search_emails`、`get_email`、`find_email`、`resolve_people` |
 | 草稿工作流 | `compose_email`、`reply_to_email`、`forward_email`、`update_email_draft`、`add_attachment_to_draft`、`continue_action` |
 | 周报 | `get_weekly_report_context`、`update_weekly_report` |
-| 日历 | `get_user_availability`、`list_calendar_events`、`get_calendar_item`、`find_meeting_times`、`schedule_meeting` |
+| 日历 | `get_user_availability`、`list_calendar_events`、`get_calendar_item`、`find_meeting_times`、`schedule_meeting`、`update_meeting`、`send_meeting_invitation` |
 
 Debug profile 额外提供：`resolve_names`、`create_draft`、`reply_as_draft`、`forward_as_draft`、`update_draft`、`create_meeting`。
 
@@ -206,7 +206,7 @@ GitHub Actions 会在 Python 3.10、3.11、3.12、3.13 上运行严格 UT，并�
 | [DT.md](docs/DT.md) | 真实 Exchange DT 指南。 |
 | [FRESH-START.md](docs/FRESH-START.md) | 全新安装和升级检查。 |
 | [CHANGELOG.md](docs/CHANGELOG.md) | 版本变更记录。 |
-| [RELEASE-AUDIT.md](docs/RELEASE-AUDIT.md) | v0.6.14 最终验证记录和产物哈希。 |
+| [RELEASE-AUDIT.md](docs/RELEASE-AUDIT.md) | v0.6.16 最终验证记录和产物哈希。 |
 | [RELEASE-CHECKLIST.md](docs/RELEASE-CHECKLIST.md) | 可复用的发布门禁和真实 DT 清单。 |
 | [CONTRIBUTING.zh-CN.md](docs/CONTRIBUTING.zh-CN.md) | 中文贡献指南。 |
 | [SECURITY.zh-CN.md](docs/SECURITY.zh-CN.md) | 中文安全报告策略。 |

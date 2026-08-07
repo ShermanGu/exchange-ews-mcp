@@ -1,4 +1,4 @@
-# Fresh install and upgrade — v0.6.14
+# Fresh install and upgrade — v0.6.16
 
 ## Clean installation
 
@@ -18,8 +18,8 @@ Verify:
 Expected:
 
 ```text
-version = 0.6.14
-visible_tool_count = 19
+version = 0.6.16
+visible_tool_count = 21
 ```
 
 Configure the mailbox:
@@ -40,10 +40,10 @@ Configure allowed attachment roots and calendar preferences as needed.
 1. Keep the existing Windows user profile and Credential Manager entries.
 2. Replace or update the repository files.
 3. Run `install.cmd` from the new repository.
-4. Confirm both module and metadata versions are `0.6.14`.
+4. Confirm both module and metadata versions are `0.6.16`.
 5. Regenerate the MCP configuration.
 6. Completely restart the MCP client.
-7. Verify that 19 production tools are visible.
+7. Verify that 21 production tools are visible.
 
 Do not run `reset-local` during a normal upgrade. It removes configuration, DT configuration, the local reference database, and the stored password.
 

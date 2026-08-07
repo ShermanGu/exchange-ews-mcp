@@ -107,6 +107,65 @@ def test_send_invitations_requires_second_confirmation(tmp_path: Path) -> None:
     assert client.created[0]["send_invitations"] is True
 
 
+def test_send_confirmation_can_save_without_sending(tmp_path: Path) -> None:
+    wf, client = workflow(tmp_path)
+    pending = wf.schedule_meeting(
+        attendee_queries=["alice"], subject="Planning", body_html="<p>x</p>",
+        start="2026-08-03T09:15:00Z", end="2026-08-03T10:15:00Z",
+        send_invitations=True,
+    )
+    saved = wf.continue_action(
+        resume_token=pending["resume_token"], selections={"confirm": "save"},
+    )
+    assert saved["status"] == "meeting_saved_not_sent"
+    assert saved["sent"] is False
+    assert client.created[0]["send_invitations"] is False
+
+
+def test_send_confirmation_no_means_save_without_sending(tmp_path: Path) -> None:
+    wf, client = workflow(tmp_path)
+    pending = wf.schedule_meeting(
+        attendee_queries=["alice"], subject="Planning", body_html="<p>x</p>",
+        start="2026-08-03T09:15:00Z", end="2026-08-03T10:15:00Z",
+        send_invitations=True,
+    )
+    saved = wf.continue_action(
+        resume_token=pending["resume_token"], selections={"confirm": "no"},
+    )
+    assert saved["status"] == "meeting_saved_not_sent"
+    assert client.created[0]["send_invitations"] is False
+
+
+def test_chinese_save_only_confirmation_with_punctuation_is_supported(tmp_path: Path) -> None:
+    wf, client = workflow(tmp_path)
+    pending = wf.schedule_meeting(
+        attendee_queries=["alice"], subject="Planning", body_html="<p>x</p>",
+        start="2026-08-03T09:15:00Z", end="2026-08-03T10:15:00Z",
+        send_invitations=True,
+    )
+    saved = wf.continue_action(
+        resume_token=pending["resume_token"],
+        selections={"confirm": "不发送，仅仅保存"},
+    )
+    assert saved["status"] == "meeting_saved_not_sent"
+    assert client.created[0]["send_invitations"] is False
+
+
+def test_send_confirmation_can_cancel_without_creating(tmp_path: Path) -> None:
+    wf, client = workflow(tmp_path)
+    pending = wf.schedule_meeting(
+        attendee_queries=["alice"], subject="Planning", body_html="<p>x</p>",
+        start="2026-08-03T09:15:00Z", end="2026-08-03T10:15:00Z",
+        send_invitations=True,
+    )
+    cancelled = wf.continue_action(
+        resume_token=pending["resume_token"], selections={"confirm": "cancel"},
+    )
+    assert cancelled["status"] == "cancelled"
+    assert cancelled["created"] is False
+    assert client.created == []
+
+
 def test_schedule_defaults_to_unsent_meeting(tmp_path: Path) -> None:
     wf, client = workflow(tmp_path)
     result = wf.schedule_meeting(
@@ -155,3 +214,19 @@ def test_find_times_offset_free_window_uses_calendar_time_zone(tmp_path: Path) -
     assert result["status"] == "resolved"
     assert result["window_start"] == "2026-08-03T01:00:00Z"
     assert result["local_window_start"] == "2026-08-03T09:00:00+08:00"
+
+
+def test_saved_meeting_result_declares_follow_up_tools(tmp_path: Path) -> None:
+    wf, _ = workflow(tmp_path)
+    result = wf.schedule_meeting(
+        attendee_queries=["alice"], subject="Planning", body_html="<p>x</p>",
+        start="2026-08-03T09:15:00Z", end="2026-08-03T10:15:00Z",
+        send_invitations=False,
+    )
+    item = result["calendar_item"]
+    assert item["reference_kind"] == "calendar"
+    assert item["update_tool"] == "update_meeting"
+    assert item["send_tool"] == "send_meeting_invitation"
+    stored = wf.store.get_reference(item["calendar_ref"], expected_kind="calendar")
+    assert stored.payload["item_kind"] == "meeting"
+    assert stored.payload["required_attendees"] == ["alice@example.com"]

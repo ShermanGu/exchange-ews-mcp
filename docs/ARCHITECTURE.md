@@ -1,4 +1,4 @@
-# Architecture — Exchange EWS MCP v0.6.14
+# Architecture — Exchange EWS MCP v0.6.16
 
 ## Design goals
 
@@ -93,12 +93,16 @@ See [WEEKLY-REPORT.md](WEEKLY-REPORT.md).
 
 ### Calendar workflow
 
-`CalendarWorkflow` resolves attendees, queries EWS availability, applies configured local working hours, finds common slots, and creates meetings.
+`CalendarWorkflow` resolves attendees, queries EWS availability, applies configured local working hours, finds common slots, and creates meetings. Saved meetings are addressed through `calendar_ref`; update/send operations re-read the CalendarItem by ItemId so they use the server's current ChangeKey after any Outlook edit.
 
 Safety rules:
 
 - meeting creation defaults to `SendToNone`;
-- a request to send invitations produces a confirmation action;
+- a request to send invitations produces a three-way send/save/cancel confirmation action;
+- choosing save creates the CalendarItem without notifying attendees;
+- `update_meeting` is restricted to unsent, non-cancelled meetings and uses `SendToNone`;
+- `send_meeting_invitation` requires `confirm_send=true`, rejects already-sent meetings, and uses `SendToAllAndSaveCopy`;
+- calendar updates use `NeverOverwrite`, so a concurrent Exchange edit fails instead of being silently replaced;
 - a time-window request with multiple valid slots produces a time-selection action first;
 - Agent-facing results include local-display fields while preserving UTC semantics.
 
@@ -106,7 +110,7 @@ Safety rules:
 
 ### Production profile
 
-The production profile exposes 19 curated tools. It includes high-level workflows and read-only primitives but hides overlapping low-level writes.
+The production profile exposes 21 curated tools. It includes high-level workflows and read-only primitives but hides overlapping low-level writes.
 
 ### Debug profile
 

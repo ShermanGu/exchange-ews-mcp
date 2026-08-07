@@ -246,16 +246,11 @@ def test_window_schedule_requires_slot_then_send_confirmation(tmp_path: Path) ->
     )
     assert pending_send["confirmation_type"] == "send_invitations"
     assert client.created == []
-    still_pending = workflow.continue_action(
+    saved = workflow.continue_action(
         resume_token=pending_send["resume_token"], selections={"confirm": "no"}
     )
-    assert still_pending["status"] == "needs_confirmation"
-    assert client.created == []
-    sent = workflow.continue_action(
-        resume_token=pending_send["resume_token"], selections={"confirm": "send"}
-    )
-    assert sent["status"] == "meeting_sent"
-    assert client.created[0]["send_invitations"] is True
+    assert saved["status"] == "meeting_saved_not_sent"
+    assert client.created[0]["send_invitations"] is False
 
 
 def test_all_server_wrappers_delegate_to_matching_service(monkeypatch) -> None:

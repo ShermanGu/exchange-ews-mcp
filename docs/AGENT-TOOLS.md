@@ -1,8 +1,8 @@
-# Agent tool surface — v0.6.14
+# Agent tool surface — v0.6.16
 
 Normal Agents must use the **production** stdio server. The debug server is reserved for deterministic EWS troubleshooting and development tests.
 
-## Production profile: 19 tools
+## Production profile: 21 tools
 
 ### Identity and mail reads
 
@@ -22,7 +22,7 @@ Normal Agents must use the **production** stdio server. The debug server is rese
 | `compose_email` | Resolve recipients and create a new HTML draft. | Draft only |
 | `reply_to_email` | Resolve a source message and create a reply or Reply All draft. | Draft only |
 | `forward_email` | Resolve source and recipients and create a forward draft. | Draft only |
-| `update_email_draft` | Modify an existing draft through `draft_ref`. | Draft only |
+| `update_email_draft` | Modify an email draft through `draft_ref`; never pass `calendar_ref`. A calendar ref returns a non-mutating route hint to `update_meeting`. | Draft only |
 | `add_attachment_to_draft` | Add an allow-listed local file to a draft. | Draft only |
 | `continue_action` | Resume a candidate choice, time choice, or send confirmation. | Depends on pending action |
 
@@ -41,7 +41,9 @@ Normal Agents must use the **production** stdio server. The debug server is rese
 | `list_calendar_events` | List current-user calendar items in a time window. | Read-only |
 | `get_calendar_item` | Read an item through `calendar_ref`. | Read-only |
 | `find_meeting_times` | Resolve attendees and find common slots within working hours. | Read-only |
-| `schedule_meeting` | Create an unsent meeting or send only after explicit confirmation. | Default `SendToNone` |
+| `schedule_meeting` | Resolve attendees/time and create a meeting. A send request pauses for an explicit send/save/cancel decision. | Default `SendToNone` |
+| `update_meeting` | Update an unsent meeting through `calendar_ref`. Meeting classification uses attendees and MCP provenance in addition to Exchange `IsMeeting`. | `SendToNone`; no attendee notification |
+| `send_meeting_invitation` | Send invitations for an existing unsent meeting after `confirm_send=true`. | `SendToAllAndSaveCopy` |
 
 ## Debug-only tools
 
@@ -73,7 +75,10 @@ Add an attachment                   → add_attachment_to_draft
 Update a weekly report              → get_weekly_report_context → update_weekly_report
 Find common meeting time            → find_meeting_times
 Create meeting without sending      → schedule_meeting(send_invitations=false)
-Send invitations                    → schedule_meeting → continue_action(confirm=send)
+Save after send confirmation         → continue_action(confirm=save)
+Update a saved unsent meeting        → update_meeting(calendar_ref=...)
+Send a saved meeting invitation      → send_meeting_invitation(calendar_ref=..., confirm_send=true)
+Create and send in one workflow      → schedule_meeting → continue_action(confirm=send)
 ```
 
 ## Weekly-report routing contract

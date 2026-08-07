@@ -38,6 +38,7 @@ from .xml_builder import (
     build_reply_draft_request,
     build_resolve_names_request,
     build_update_draft_request,
+    build_update_meeting_request,
     q,
 )
 
@@ -233,6 +234,8 @@ class CalendarItemResult:
             "location": self.location,
             "required_attendees": self.required_attendees,
             "optional_attendees": self.optional_attendees,
+            "is_meeting": True,
+            "meeting_request_was_sent": self.sent,
             "sent": self.sent,
         }
 
@@ -493,6 +496,9 @@ def _parse_calendar_item(item: ET.Element, *, include_body: bool = False) -> dic
         "end": _text(item, "End"),
         "location": _text(item, "Location"),
         "is_meeting": _bool_text(item, "IsMeeting"),
+        "is_draft": _bool_text(item, "IsDraft"),
+        "is_cancelled": _bool_text(item, "IsCancelled"),
+        "meeting_request_was_sent": _bool_text(item, "MeetingRequestWasSent"),
         "is_all_day_event": _bool_text(item, "IsAllDayEvent"),
         "legacy_free_busy_status": _text(item, "LegacyFreeBusyStatus"),
         "organizer": organizer,
@@ -1856,6 +1862,129 @@ class EwsClient:
             optional_attendees=optional,
             location=location.strip() if location and location.strip() else None,
             sent=send_invitations,
+        )
+
+    def update_meeting(
+        self,
+        *,
+        item_id: str,
+        change_key: str,
+        subject: str | None = None,
+        body_html: str | None = None,
+        start: str | None = None,
+        end: str | None = None,
+        location: str | None = None,
+        required_attendees: list[str] | None = None,
+        optional_attendees: list[str] | None = None,
+        reminder_minutes: int | None = None,
+        send_invitations: bool = False,
+    ) -> dict[str, Any]:
+        """Update one CalendarItem and optionally notify all attendees."""
+
+        item_id_value = item_id.strip()
+        change_key_value = change_key.strip()
+        if not item_id_value:
+            raise ValueError("item_id 不能为空。")
+        if not change_key_value:
+            raise ValueError("change_key 不能为空。")
+        values = (
+            subject,
+            body_html,
+            start,
+            end,
+            location,
+            required_attendees,
+            optional_attendees,
+            reminder_minutes,
+        )
+        if all(value is None for value in values):
+            raise ValueError("至少需要提供一个待更新字段。")
+
+        subject_value = None
+        if subject is not None:
+            subject_value = subject.strip()
+            if not subject_value:
+                raise ValueError("subject 不能设置为空字符串。")
+        body_value = body_html if body_html is not None else None
+
+        if bool(start) != bool(end):
+            raise ValueError("start 和 end 必须同时提供。")
+        start_value = _normalize_iso_datetime(start, "start") if start is not None else None
+        end_value = _normalize_iso_datetime(end, "end") if end is not None else None
+        if start_value and end_value:
+            start_dt = datetime.fromisoformat(start_value.replace("Z", "+00:00"))
+            end_dt = datetime.fromisoformat(end_value.replace("Z", "+00:00"))
+            if end_dt <= start_dt:
+                raise ValueError("end 必须晚于 start。")
+
+        required = (
+            _validate_addresses(required_attendees, "required_attendees")
+            if required_attendees is not None
+            else None
+        )
+        optional = (
+            _validate_addresses(optional_attendees, "optional_attendees")
+            if optional_attendees is not None
+            else None
+        )
+        if reminder_minutes is not None and not 0 <= reminder_minutes <= 40320:
+            raise ValueError("reminder_minutes 必须在 0 到 40320 之间。")
+
+        payload = build_update_meeting_request(
+            exchange_version=self.config.exchange_version,
+            item_id=item_id_value,
+            change_key=change_key_value,
+            subject=subject_value,
+            body_html=body_value,
+            start=start_value,
+            end=end_value,
+            location=location,
+            required_attendees=required,
+            optional_attendees=optional,
+            reminder_minutes=reminder_minutes,
+            send_invitations=send_invitations,
+        )
+        response = self._post(payload)
+        root = self._parse_xml(response)
+        self._raise_for_ews_error(root)
+        item = root.find(f".//{q(TYPES_NS, 'ItemId')}")
+        if item is None or not item.attrib.get("Id"):
+            identity = self.get_item_identity(item_id=item_id_value)
+            updated_id = str(identity["item_id"])
+            updated_key = identity.get("change_key")
+        else:
+            updated_id = item.attrib["Id"]
+            updated_key = item.attrib.get("ChangeKey")
+        return {
+            "status": "meeting_invitation_sent" if send_invitations else "meeting_updated_not_sent",
+            "folder": "calendar",
+            "item_id": updated_id,
+            "change_key": updated_key,
+            "sent": send_invitations,
+        }
+
+    def send_meeting_invitation(
+        self,
+        *,
+        item_id: str,
+        change_key: str,
+        subject: str,
+    ) -> dict[str, Any]:
+        """Send invitations for an existing unsent CalendarItem.
+
+        EWS sends a meeting request as part of CalendarItem UpdateItem.  Setting
+        the current subject again supplies the required concrete update while
+        preserving the user's already-edited meeting content.
+        """
+
+        subject_value = subject.strip()
+        if not subject_value:
+            raise ValueError("subject 不能为空。")
+        return self.update_meeting(
+            item_id=item_id,
+            change_key=change_key,
+            subject=subject_value,
+            send_invitations=True,
         )
 
     def delete_calendar_item(

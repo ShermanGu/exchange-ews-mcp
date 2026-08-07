@@ -49,7 +49,9 @@ def _attach_message_ref(item: dict[str, Any], store: ReferenceStore) -> dict[str
             ttl_days=30 if kind == "draft" else 7,
         )
         result[f"{kind}_ref"] = ref
+        result["reference_kind"] = kind
         if kind == "draft":
+            result["update_tool"] = "update_email_draft"
             result["message_ref"] = store.upsert_reference(
                 kind="message",
                 external_key=str(item_id),
@@ -61,6 +63,8 @@ def _attach_message_ref(item: dict[str, Any], store: ReferenceStore) -> dict[str
 
 def _draft_result(result: Any, store: ReferenceStore) -> dict[str, Any]:
     data = result.as_dict()
+    data["reference_kind"] = "draft"
+    data["update_tool"] = "update_email_draft"
     data["draft_ref"] = store.upsert_reference(
         kind="draft",
         external_key=result.item_id,
@@ -464,12 +468,52 @@ def continue_action(*, resume_token: str, selections: dict[str, str]) -> dict[st
 
 
 def update_email_draft(**kwargs: Any) -> dict[str, Any]:
-    """Semantic-layer name for updating an existing draft; behavior remains SaveOnly."""
+    """Update an email draft only; calendar references are routed back to the Agent safely."""
+    draft_ref = str(kwargs.get("draft_ref") or "").strip()
+    if draft_ref:
+        stored = configured_store().get_reference(draft_ref)
+        if stored.kind == "calendar":
+            return {
+                "status": "wrong_reference_type",
+                "reference_kind": "calendar",
+                "calendar_ref": draft_ref,
+                "recommended_tool": "update_meeting",
+                "message": (
+                    "该引用属于日历项目，未执行邮件草稿更新。"
+                    "请使用 update_meeting(calendar_ref=...) 修改会议。"
+                ),
+            }
+        if stored.kind != "draft":
+            raise ValueError(
+                f"引用 {draft_ref} 的类型是 {stored.kind}，不是 draft。"
+            )
     return update_draft(**kwargs)
+
+
+def _calendar_attendee_values(item: dict[str, Any], field: str) -> list[str]:
+    values: list[str] = []
+    seen: set[str] = set()
+    for attendee in item.get(field) or []:
+        if isinstance(attendee, dict):
+            email = str(attendee.get("email") or "").strip()
+        else:
+            email = str(attendee or "").strip()
+        lowered = email.casefold()
+        if email and lowered not in seen:
+            values.append(email)
+            seen.add(lowered)
+    return values
 
 
 def _calendar_result(item: dict[str, Any], store: ReferenceStore) -> dict[str, Any]:
     result = dict(item)
+    required = _calendar_attendee_values(item, "required_attendees")
+    optional = _calendar_attendee_values(item, "optional_attendees")
+    meeting_evidence = item.get("is_meeting") is True or bool(required or optional)
+    result["reference_kind"] = "calendar"
+    if meeting_evidence:
+        result["update_tool"] = "update_meeting"
+        result["send_tool"] = "send_meeting_invitation"
     item_id = str(item.get("item_id") or "").strip()
     if item_id:
         result["calendar_ref"] = store.upsert_reference(
@@ -482,6 +526,11 @@ def _calendar_result(item: dict[str, Any], store: ReferenceStore) -> dict[str, A
                 "start": item.get("start"),
                 "end": item.get("end"),
                 "folder": "calendar",
+                "item_kind": "meeting" if meeting_evidence else "calendar_item",
+                "is_meeting": item.get("is_meeting"),
+                "meeting_request_was_sent": item.get("meeting_request_was_sent"),
+                "required_attendees": required,
+                "optional_attendees": optional,
             },
             ttl_days=30,
         )
@@ -492,14 +541,18 @@ def _resolve_calendar_item(
     *,
     item_id: str | None = None,
     calendar_ref: str | None = None,
-) -> tuple[str, str | None]:
+) -> tuple[str, str | None, dict[str, Any] | None]:
     supplied = [value for value in (item_id, calendar_ref) if value]
     if len(supplied) != 1:
         raise ValueError("item_id、calendar_ref 必须且只能提供一个。")
     if item_id:
-        return item_id.strip(), None
+        return item_id.strip(), None, None
     stored = configured_store().get_reference(str(calendar_ref), expected_kind="calendar")
-    return str(stored.payload["item_id"]), stored.payload.get("change_key")
+    return (
+        str(stored.payload["item_id"]),
+        stored.payload.get("change_key"),
+        dict(stored.payload),
+    )
 
 
 def get_user_availability(
@@ -557,15 +610,199 @@ def get_calendar_item(
     calendar_ref: str | None = None,
     change_key: str | None = None,
 ) -> dict[str, Any]:
-    resolved_id, stored_key = _resolve_calendar_item(item_id=item_id, calendar_ref=calendar_ref)
+    resolved_id, _, _ = _resolve_calendar_item(item_id=item_id, calendar_ref=calendar_ref)
     result = configured_client().get_calendar_item(
         item_id=resolved_id,
-        change_key=change_key or stored_key,
+        # ItemId alone always resolves the current server-side ChangeKey.  This
+        # keeps calendar_ref usable after a user edits the item in Outlook.
+        change_key=change_key,
     )
     config = load_config()
     return decorate_calendar_item(
         _calendar_result(result, configured_store()), config.calendar_time_zone
     )
+
+
+def _attendee_emails(item: dict[str, Any], field: str) -> list[str]:
+    result: list[str] = []
+    for attendee in item.get(field) or []:
+        if isinstance(attendee, dict):
+            email = str(attendee.get("email") or "").strip()
+        else:
+            email = str(attendee or "").strip()
+        if email:
+            result.append(email)
+    return result
+
+
+def _current_unsent_meeting(
+    *,
+    item_id: str,
+    reference_payload: dict[str, Any] | None = None,
+) -> tuple[EwsClient, dict[str, Any]]:
+    client = configured_client()
+    current = client.get_calendar_item(item_id=item_id)
+    if current.get("is_cancelled") is True:
+        raise ValueError("目标会议已取消，不能继续修改或发送。")
+
+    reference_payload = reference_payload or {}
+    current_required = _attendee_emails(current, "required_attendees")
+    current_optional = _attendee_emails(current, "optional_attendees")
+    hinted_required = _calendar_attendee_values(reference_payload, "required_attendees")
+    hinted_optional = _calendar_attendee_values(reference_payload, "optional_attendees")
+    known_mcp_meeting = (
+        reference_payload.get("item_kind") == "meeting"
+        or reference_payload.get("is_meeting") is True
+    )
+    has_attendee_evidence = bool(
+        current_required or current_optional or hinted_required or hinted_optional
+    )
+
+    # Some on-premises Exchange builds report IsMeeting=false for a CalendarItem
+    # saved with SendToNone even though attendee collections are still present.
+    # Microsoft defines a calendar item with attendees as a meeting, so do not
+    # reject a valid unsent meeting based on that single inconsistent flag.
+    if current.get("is_meeting") is not True and not (
+        has_attendee_evidence or known_mcp_meeting
+    ):
+        raise ValueError("目标日历项目不是会议，且未发现任何参会人。")
+
+    if not current_required and hinted_required:
+        current["required_attendees"] = [{"email": value} for value in hinted_required]
+    if not current_optional and hinted_optional:
+        current["optional_attendees"] = [{"email": value} for value in hinted_optional]
+    current["is_meeting"] = True
+
+    if current.get("meeting_request_was_sent") is True:
+        raise ValueError("该会议邀请已经发送；当前工具只处理尚未发送的会议。")
+    if not current.get("change_key"):
+        raise ValueError("Exchange 未返回会议当前 ChangeKey。")
+    return client, current
+
+
+def update_meeting(
+    *,
+    item_id: str | None = None,
+    calendar_ref: str | None = None,
+    subject: str | None = None,
+    body_html: str | None = None,
+    start: str | None = None,
+    end: str | None = None,
+    location: str | None = None,
+    required_attendees: list[str] | None = None,
+    optional_attendees: list[str] | None = None,
+    reminder_minutes: int | None = None,
+) -> dict[str, Any]:
+    """Update an existing unsent meeting without notifying attendees."""
+
+    if all(
+        value is None
+        for value in (
+            subject,
+            body_html,
+            start,
+            end,
+            location,
+            required_attendees,
+            optional_attendees,
+            reminder_minutes,
+        )
+    ):
+        raise ValueError("至少需要提供一个待更新字段。")
+    resolved_id, _, reference_payload = _resolve_calendar_item(
+        item_id=item_id, calendar_ref=calendar_ref
+    )
+    client, current = _current_unsent_meeting(
+        item_id=resolved_id, reference_payload=reference_payload
+    )
+
+    config = load_config()
+    start_value = end_value = None
+    if bool(start) != bool(end):
+        raise ValueError("start 和 end 必须同时提供。")
+    if start is not None and end is not None:
+        start_dt = parse_input_datetime(start, config.calendar_time_zone, "start")
+        end_dt = parse_input_datetime(end, config.calendar_time_zone, "end")
+        if end_dt <= start_dt:
+            raise ValueError("end 必须晚于 start。")
+        start_value, end_value = format_utc(start_dt), format_utc(end_dt)
+
+    effective_required = (
+        required_attendees
+        if required_attendees is not None
+        else _attendee_emails(current, "required_attendees")
+    )
+    effective_optional = (
+        optional_attendees
+        if optional_attendees is not None
+        else _attendee_emails(current, "optional_attendees")
+    )
+    if not effective_required and not effective_optional:
+        raise ValueError("会议至少需要一个 required 或 optional attendee。")
+
+    updated = client.update_meeting(
+        item_id=resolved_id,
+        change_key=str(current["change_key"]),
+        subject=subject,
+        body_html=body_html,
+        start=start_value,
+        end=end_value,
+        location=location,
+        required_attendees=required_attendees,
+        optional_attendees=optional_attendees,
+        reminder_minutes=reminder_minutes,
+        send_invitations=False,
+    )
+    refreshed = client.get_calendar_item(item_id=str(updated["item_id"]))
+    refreshed["sent"] = False
+    return {
+        "status": "meeting_updated_not_sent",
+        "calendar_item": decorate_calendar_item(
+            _calendar_result(refreshed, configured_store()), config.calendar_time_zone
+        ),
+        "sent": False,
+    }
+
+
+def send_meeting_invitation(
+    *,
+    item_id: str | None = None,
+    calendar_ref: str | None = None,
+    confirm_send: bool = False,
+) -> dict[str, Any]:
+    """Send invitations for one existing unsent meeting after explicit confirmation."""
+
+    if not confirm_send:
+        raise ValueError("发送会议邀请前必须显式设置 confirm_send=true。")
+    resolved_id, _, reference_payload = _resolve_calendar_item(
+        item_id=item_id, calendar_ref=calendar_ref
+    )
+    client, current = _current_unsent_meeting(
+        item_id=resolved_id, reference_payload=reference_payload
+    )
+    required = _attendee_emails(current, "required_attendees")
+    optional = _attendee_emails(current, "optional_attendees")
+    if not required and not optional:
+        raise ValueError("会议没有参会人，无法发送邀请。")
+    subject = str(current.get("subject") or "").strip()
+    if not subject:
+        raise ValueError("会议主题为空，无法发送邀请。")
+
+    sent_result = client.send_meeting_invitation(
+        item_id=resolved_id,
+        change_key=str(current["change_key"]),
+        subject=subject,
+    )
+    refreshed = client.get_calendar_item(item_id=str(sent_result["item_id"]))
+    refreshed["meeting_request_was_sent"] = True
+    refreshed["sent"] = True
+    return {
+        "status": "meeting_invitation_sent",
+        "calendar_item": decorate_calendar_item(
+            _calendar_result(refreshed, configured_store()), load_config().calendar_time_zone
+        ),
+        "sent": True,
+    }
 
 
 def create_meeting(

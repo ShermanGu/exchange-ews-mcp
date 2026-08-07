@@ -529,6 +529,18 @@ def _add_calendar_item_shape(parent: ET.Element, *, all_properties: bool = False
     )
     if all_properties:
         ET.SubElement(shape, q(TYPES_NS, "BodyType")).text = "HTML"
+        additional = ET.SubElement(shape, q(TYPES_NS, "AdditionalProperties"))
+        for field_uri in (
+            "item:IsDraft",
+            "calendar:IsMeeting",
+            "calendar:IsCancelled",
+            "calendar:MeetingRequestWasSent",
+        ):
+            ET.SubElement(
+                additional,
+                q(TYPES_NS, "FieldURI"),
+                {"FieldURI": field_uri},
+            )
         return
     additional = ET.SubElement(shape, q(TYPES_NS, "AdditionalProperties"))
     for field_uri in (
@@ -592,6 +604,41 @@ def _add_attendees(calendar_item: ET.Element, element_name: str, attendees: list
         ET.SubElement(mailbox, q(TYPES_NS, "EmailAddress")).text = address
 
 
+def _set_calendar_field(
+    updates: ET.Element,
+    field_uri: str,
+    element_name: str,
+    value: str,
+    *,
+    body_type: str | None = None,
+) -> None:
+    set_field = ET.SubElement(updates, q(TYPES_NS, "SetItemField"))
+    ET.SubElement(set_field, q(TYPES_NS, "FieldURI"), {"FieldURI": field_uri})
+    calendar_item = ET.SubElement(set_field, q(TYPES_NS, "CalendarItem"))
+    attrs = {"BodyType": body_type} if body_type else {}
+    ET.SubElement(calendar_item, q(TYPES_NS, element_name), attrs).text = value
+
+
+def _delete_calendar_field(updates: ET.Element, field_uri: str) -> None:
+    delete_field = ET.SubElement(updates, q(TYPES_NS, "DeleteItemField"))
+    ET.SubElement(delete_field, q(TYPES_NS, "FieldURI"), {"FieldURI": field_uri})
+
+
+def _set_or_delete_attendees(
+    updates: ET.Element,
+    field_uri: str,
+    element_name: str,
+    attendees: list[str],
+) -> None:
+    if not attendees:
+        _delete_calendar_field(updates, field_uri)
+        return
+    set_field = ET.SubElement(updates, q(TYPES_NS, "SetItemField"))
+    ET.SubElement(set_field, q(TYPES_NS, "FieldURI"), {"FieldURI": field_uri})
+    calendar_item = ET.SubElement(set_field, q(TYPES_NS, "CalendarItem"))
+    _add_attendees(calendar_item, element_name, attendees)
+
+
 def build_create_meeting_request(
     *,
     exchange_version: str,
@@ -637,6 +684,103 @@ def build_create_meeting_request(
         ET.SubElement(calendar_item, q(TYPES_NS, "Location")).text = location.strip()
     _add_attendees(calendar_item, "RequiredAttendees", required_attendees)
     _add_attendees(calendar_item, "OptionalAttendees", optional_attendees)
+    return _serialize(envelope)
+
+
+def build_update_meeting_request(
+    *,
+    exchange_version: str,
+    item_id: str,
+    change_key: str,
+    subject: str | None = None,
+    body_html: str | None = None,
+    start: str | None = None,
+    end: str | None = None,
+    location: str | None = None,
+    required_attendees: list[str] | None = None,
+    optional_attendees: list[str] | None = None,
+    reminder_minutes: int | None = None,
+    send_invitations: bool = False,
+) -> bytes:
+    """Build one CalendarItem UpdateItem request.
+
+    ``None`` means that a property is left unchanged.  For ``location`` an
+    explicitly supplied empty string removes the current value.  Empty attendee
+    lists likewise remove that attendee collection.  ``send_invitations`` is
+    deliberately explicit because the safe default is to keep the edit local to
+    the organizer's calendar.
+    """
+
+    envelope, soap_body = _base_envelope(exchange_version)
+    update_item = ET.SubElement(
+        soap_body,
+        q(MESSAGES_NS, "UpdateItem"),
+        {
+            # A calendar_ref may be followed by a manual Outlook edit.  The
+            # caller refreshes ChangeKey immediately before this request, and
+            # NeverOverwrite prevents a second concurrent edit from being
+            # silently lost between that read and this write/send.
+            "ConflictResolution": "NeverOverwrite",
+            # Microsoft's meeting UpdateItem examples use SaveOnly while the
+            # invitation behavior is controlled separately below.  Supplying it
+            # is harmless for CalendarItem and improves compatibility with older
+            # on-premises Exchange builds.
+            "MessageDisposition": "SaveOnly",
+            "SendMeetingInvitationsOrCancellations": (
+                "SendToAllAndSaveCopy" if send_invitations else "SendToNone"
+            ),
+        },
+    )
+    item_changes = ET.SubElement(update_item, q(MESSAGES_NS, "ItemChanges"))
+    item_change = ET.SubElement(item_changes, q(TYPES_NS, "ItemChange"))
+    _item_id(item_change, item_id, change_key)
+    updates = ET.SubElement(item_change, q(TYPES_NS, "Updates"))
+
+    if subject is not None:
+        _set_calendar_field(updates, "item:Subject", "Subject", subject)
+    if body_html is not None:
+        _set_calendar_field(
+            updates, "item:Body", "Body", body_html, body_type="HTML"
+        )
+    if start is not None:
+        _set_calendar_field(updates, "calendar:Start", "Start", start)
+    if end is not None:
+        _set_calendar_field(updates, "calendar:End", "End", end)
+    if location is not None:
+        if location.strip():
+            _set_calendar_field(
+                updates, "calendar:Location", "Location", location.strip()
+            )
+        else:
+            _delete_calendar_field(updates, "calendar:Location")
+    if required_attendees is not None:
+        _set_or_delete_attendees(
+            updates,
+            "calendar:RequiredAttendees",
+            "RequiredAttendees",
+            required_attendees,
+        )
+    if optional_attendees is not None:
+        _set_or_delete_attendees(
+            updates,
+            "calendar:OptionalAttendees",
+            "OptionalAttendees",
+            optional_attendees,
+        )
+    if reminder_minutes is not None:
+        _set_calendar_field(
+            updates,
+            "item:ReminderIsSet",
+            "ReminderIsSet",
+            "true" if reminder_minutes > 0 else "false",
+        )
+        if reminder_minutes > 0:
+            _set_calendar_field(
+                updates,
+                "item:ReminderMinutesBeforeStart",
+                "ReminderMinutesBeforeStart",
+                str(reminder_minutes),
+            )
     return _serialize(envelope)
 
 

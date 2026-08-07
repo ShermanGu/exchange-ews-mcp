@@ -1,4 +1,4 @@
-# Connect an Agent to Exchange EWS MCP v0.6.14
+# Connect an Agent to Exchange EWS MCP v0.6.16
 
 ## 1. Install and verify
 
@@ -13,8 +13,8 @@ cd D:\tools\exchange-ews-mcp
 Expected:
 
 ```text
-version = 0.6.14
-visible_tool_count = 19
+version = 0.6.16
+visible_tool_count = 21
 ```
 
 The reported package and Python paths must be inside the current repository's `.venv`.
@@ -64,7 +64,7 @@ Equivalent form:
 
 ## 4. Expected production tools
 
-The Agent should see exactly these 19 tools:
+The Agent should see exactly these 21 tools:
 
 ```text
 get_current_user
@@ -86,6 +86,8 @@ list_calendar_events
 get_calendar_item
 find_meeting_times
 schedule_meeting
+update_meeting
+send_meeting_invitation
 ```
 
 If the list is stale or incomplete:
@@ -106,7 +108,8 @@ Run each scenario separately and review the resulting draft or confirmation stat
 4. `项目A完成联调，项目B没变化，下周项目A做性能测试。`
 5. `查我和 xiaoming 下周工作时间内共同空闲的一小时。`
 6. `按第一个时间创建会议，但不要发送邀请。`
-7. `发送刚才的会议邀请。`
+7. `把刚才会议的正文改成“请提前准备当前进展和风险”，仍然不要发送。`
+8. `发送刚才的会议邀请。`
 
 Expected safety behavior:
 
@@ -114,8 +117,9 @@ Expected safety behavior:
 - the weekly-report request calls `get_weekly_report_context` before `update_weekly_report`;
 - “项目B没变化” does not create a “no change” slot edit;
 - reporting-period dates are reviewed and updated;
-- the meeting send request pauses for explicit confirmation;
-- only the confirmed meeting action sends invitations.
+- choosing save/no at the meeting send decision creates an unsent calendar item instead of returning another pending confirmation;
+- `update_meeting` changes an unsent meeting without notifying attendees;
+- `send_meeting_invitation` rejects calls without explicit confirmation and rejects already-sent meetings.
 
 ## 6. Weekly-report Agent requirements
 

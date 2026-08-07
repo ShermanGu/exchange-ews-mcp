@@ -21,6 +21,8 @@ PRODUCTION_TOOL_NAMES: tuple[str, ...] = (
     "get_user_availability",
     "list_calendar_events",
     "get_calendar_item",
+    "update_meeting",
+    "send_meeting_invitation",
     "find_meeting_times",
     "schedule_meeting",
 )

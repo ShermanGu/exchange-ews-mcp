@@ -67,10 +67,10 @@ def test_scripted_pytest_invocations_use_python_module_mode() -> None:
     assert release.index('python -c "import pytest"') < release.index(':try_project_venv')
 
 
-def test_public_docs_match_v0614_tool_and_weekly_contract() -> None:
-    assert __version__ == "0.6.14"
-    assert len(tool_names()) == 19
-    assert len(tool_names(include_debug_tools=True)) == 25
+def test_public_docs_match_v0615_tool_and_workflow_contract() -> None:
+    assert __version__ == "0.6.16"
+    assert len(tool_names()) == 21
+    assert len(tool_names(include_debug_tools=True)) == 27
     assert VALID_GROUPS == (
         "atomic",
         "workflow-v03",
@@ -80,9 +80,11 @@ def test_public_docs_match_v0614_tool_and_weekly_contract() -> None:
     )
     for name in ("README.md", "README.zh-CN.md", "docs/AGENT-CONNECTION.md", "docs/AGENT-TOOLS.md"):
         text = read(name)
-        assert "0.6.14" in text
+        assert "0.6.16" in text
         assert "get_weekly_report_context" in text
         assert "update_weekly_report" in text
+        assert "update_meeting" in text
+        assert "send_meeting_invitation" in text
 
 
 def test_ci_runs_supported_windows_matrix_and_package_build() -> None:
