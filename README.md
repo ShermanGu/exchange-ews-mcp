@@ -1,4 +1,4 @@
-# Exchange EWS MCP v0.6.14
+# Exchange EWS MCP v0.6.16
 
 **English** | [简体中文](README.zh-CN.md)
 
@@ -16,8 +16,8 @@ A local, draft-first [Model Context Protocol (MCP)](https://modelcontextprotocol
 
 - **Local by design** — the MCP server runs on the user's Windows machine; no relay service is required.
 - **Draft-first mail safety** — compose, reply, forward, and weekly-report tools create unsent drafts.
-- **Explicit meeting sends** — invitations require a separate confirmation step.
-- **Curated Agent surface** — 19 production tools; 6 additional low-level tools are debug-only.
+- **Explicit meeting sends** — meetings can be saved and edited without notifications; sending an existing meeting requires a separate confirmation step.
+- **Curated Agent surface** — 21 production tools; 6 additional low-level tools are debug-only.
 - **Opaque local references** — Agents use `message_ref`, `draft_ref`, `calendar_ref`, and one-time workflow tokens rather than raw Exchange IDs.
 - **Weekly-report intelligence without HTML generation** — the Agent sees compact text slots and location strings; the server keeps and validates the original HTML.
 - **Complex layout support** — weekly-report locations cover merged cells, multi-level headers, nested tables, paragraphs, headings, and lists.
@@ -131,7 +131,7 @@ Restart the MCP client after changing its configuration. Use the production serv
 .\.venv\Scripts\exchange-ews-mcp.exe tool-list
 ```
 
-Expected release version: `0.6.14`. Expected production tool count: `19`.
+Expected release version: `0.6.16`. Expected production tool count: `21`.
 
 ## Production tools
 
@@ -140,7 +140,7 @@ Expected release version: `0.6.14`. Expected production tool count: `19`.
 | Identity and mail reads | `get_current_user`, `list_emails`, `search_emails`, `get_email`, `find_email`, `resolve_people` |
 | Draft workflows | `compose_email`, `reply_to_email`, `forward_email`, `update_email_draft`, `add_attachment_to_draft`, `continue_action` |
 | Weekly reports | `get_weekly_report_context`, `update_weekly_report` |
-| Calendar | `get_user_availability`, `list_calendar_events`, `get_calendar_item`, `find_meeting_times`, `schedule_meeting` |
+| Calendar | `get_user_availability`, `list_calendar_events`, `get_calendar_item`, `find_meeting_times`, `schedule_meeting`, `update_meeting`, `send_meeting_invitation` |
 
 The debug profile adds `resolve_names`, `create_draft`, `reply_as_draft`, `forward_as_draft`, `update_draft`, and `create_meeting`.
 
@@ -211,7 +211,7 @@ Live Exchange development tests are separate because they require user-owned mai
 | [DT.md](docs/DT.md) | Live Exchange development-test guide. |
 | [FRESH-START.md](docs/FRESH-START.md) | Clean installation and upgrade checklist. |
 | [CHANGELOG.md](docs/CHANGELOG.md) | Release history. |
-| [RELEASE-AUDIT.md](docs/RELEASE-AUDIT.md) | Exact v0.6.14 validation record and artifact hashes. |
+| [RELEASE-AUDIT.md](docs/RELEASE-AUDIT.md) | Exact v0.6.16 validation record and artifact hashes. |
 | [RELEASE-CHECKLIST.md](docs/RELEASE-CHECKLIST.md) | Reusable release gate and live-DT checklist. |
 | [CONTRIBUTING.md](docs/CONTRIBUTING.md) | Development and pull-request guide. |
 | [SECURITY.md](docs/SECURITY.md) | Private vulnerability-reporting policy. |

@@ -2,7 +2,8 @@ from xml.etree import ElementTree as ET
 
 from exchange_ews_mcp.xml_builder import (
     MESSAGES_NS, TYPES_NS, build_create_meeting_request,
-    build_find_calendar_items_request, build_get_user_availability_request, q,
+    build_find_calendar_items_request, build_get_user_availability_request,
+    build_update_meeting_request, q,
 )
 
 
@@ -69,6 +70,54 @@ def test_create_meeting_send_mode_is_explicit() -> None:
     root = ET.fromstring(xml)
     create = root.find(f".//{q(MESSAGES_NS, 'CreateItem')}")
     assert create.attrib["SendMeetingInvitations"] == "SendToAllAndSaveCopy"
+
+
+def test_update_meeting_defaults_to_no_attendee_notifications() -> None:
+    xml = build_update_meeting_request(
+        exchange_version="Exchange2010_SP2",
+        item_id="CAL1",
+        change_key="CK1",
+        subject="Updated",
+        body_html="<p>new</p>",
+        start="2026-08-03T03:00:00Z",
+        end="2026-08-03T04:00:00Z",
+        location="Room 2",
+        required_attendees=["alice@example.com"],
+        optional_attendees=[],
+        reminder_minutes=0,
+    )
+    root = ET.fromstring(xml)
+    update = root.find(f".//{q(MESSAGES_NS, 'UpdateItem')}")
+    assert update is not None
+    assert update.attrib["ConflictResolution"] == "NeverOverwrite"
+    assert update.attrib["MessageDisposition"] == "SaveOnly"
+    assert update.attrib["SendMeetingInvitationsOrCancellations"] == "SendToNone"
+    assert root.find(f".//{q(TYPES_NS, 'SetItemField')}/{q(TYPES_NS, 'CalendarItem')}") is not None
+    field_uris = [
+        node.attrib["FieldURI"]
+        for node in root.findall(f".//{q(TYPES_NS, 'FieldURI')}")
+    ]
+    assert "item:Subject" in field_uris
+    assert "calendar:Start" in field_uris
+    assert "calendar:RequiredAttendees" in field_uris
+    assert "calendar:OptionalAttendees" in field_uris
+    assert "item:ReminderIsSet" in field_uris
+    assert "item:ReminderMinutesBeforeStart" not in field_uris
+
+
+def test_send_existing_meeting_uses_send_to_all_and_save_copy() -> None:
+    xml = build_update_meeting_request(
+        exchange_version="Exchange2010_SP2",
+        item_id="CAL1",
+        change_key="CK1",
+        subject="Planning",
+        send_invitations=True,
+    )
+    root = ET.fromstring(xml)
+    update = root.find(f".//{q(MESSAGES_NS, 'UpdateItem')}")
+    assert update is not None
+    assert update.attrib["MessageDisposition"] == "SaveOnly"
+    assert update.attrib["SendMeetingInvitationsOrCancellations"] == "SendToAllAndSaveCopy"
 
 
 def test_availability_request_supports_room_mailbox() -> None:

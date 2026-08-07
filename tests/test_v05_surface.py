@@ -6,23 +6,25 @@ from exchange_ews_mcp.tool_profiles import DEBUG_ONLY_TOOL_NAMES, PRODUCTION_TOO
 def test_cli_registers_calendar_and_tool_profile_commands() -> None:
     parser = build_parser()
     sub = next(action for action in parser._actions if getattr(action, "choices", None))
-    assert len(sub.choices) == 39
+    assert len(sub.choices) == 41
     for command in (
         "set-calendar-preferences", "availability", "calendar-list", "calendar-get",
-        "create-meeting", "find-meeting-times", "schedule-meeting", "tool-list",
+        "update-meeting", "send-meeting-invitation", "create-meeting",
+        "find-meeting-times", "schedule-meeting", "tool-list",
     ):
         assert command in sub.choices
 
 
-def test_production_server_exposes_curated_19_tools() -> None:
+def test_production_server_exposes_curated_21_tools() -> None:
     names = tool_names()
-    assert len(names) == 19
+    assert len(names) == 21
     assert names == PRODUCTION_TOOL_NAMES
     assert {
         "get_current_user", "resolve_people", "compose_email", "find_email",
         "reply_to_email", "get_weekly_report_context", "update_weekly_report",
         "forward_email", "continue_action", "update_email_draft",
         "get_user_availability", "list_calendar_events", "get_calendar_item",
+        "update_meeting", "send_meeting_invitation",
         "find_meeting_times", "schedule_meeting",
     } <= set(names)
     assert {
@@ -31,11 +33,11 @@ def test_production_server_exposes_curated_19_tools() -> None:
     }.isdisjoint(names)
 
 
-def test_debug_server_retains_all_25_tools() -> None:
+def test_debug_server_retains_all_27_tools() -> None:
     names = tool_names(include_debug_tools=True)
-    assert len(PRODUCTION_TOOL_NAMES) == 19
+    assert len(PRODUCTION_TOOL_NAMES) == 21
     assert len(DEBUG_ONLY_TOOL_NAMES) == 6
-    assert len(names) == 25
+    assert len(names) == 27
     assert names == PRODUCTION_TOOL_NAMES + DEBUG_ONLY_TOOL_NAMES
 
 

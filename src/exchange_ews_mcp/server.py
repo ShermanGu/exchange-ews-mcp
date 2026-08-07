@@ -406,7 +406,11 @@ def update_email_draft(
     bcc: list[str] | None = None,
     importance: str | None = None,
 ) -> dict[str, Any]:
-    """使用 draft_ref 修改语义工作流创建的草稿，绝不发送。"""
+    """仅修改邮件草稿，绝不发送。
+
+    draft_ref 必须是 draft_ 引用；绝不能传 calendar_ref/cal_ 引用。
+    修改会议主题或邀请正文必须调用 update_meeting。
+    """
     return service.update_email_draft(
         draft_ref=draft_ref,
         subject=subject,
@@ -450,6 +454,56 @@ def get_calendar_item(
     """读取一个日历项目；item_id/calendar_ref 必须且只能提供一个。"""
     return service.get_calendar_item(
         item_id=item_id, calendar_ref=calendar_ref, change_key=change_key
+    )
+
+
+def update_meeting(
+    item_id: str | None = None,
+    calendar_ref: str | None = None,
+    subject: str | None = None,
+    body_html: str | None = None,
+    start: str | None = None,
+    end: str | None = None,
+    location: str | None = None,
+    required_attendees: list[str] | None = None,
+    optional_attendees: list[str] | None = None,
+    reminder_minutes: int | None = None,
+) -> dict[str, Any]:
+    """修改一个尚未发送邀请的会议，并继续仅保存到组织者日历。
+
+    calendar_ref 应来自 schedule_meeting/create_meeting/get_calendar_item 返回的 cal_ 引用；
+    不要调用 update_email_draft 修改会议。item_id/calendar_ref 必须且只能提供一个。
+    start/end 必须成对提供；人员列表只接受完整邮箱。传入 location="" 可清空地点。
+    该工具不会向参会人发送任何通知。
+    """
+    return service.update_meeting(
+        item_id=item_id,
+        calendar_ref=calendar_ref,
+        subject=subject,
+        body_html=body_html,
+        start=start,
+        end=end,
+        location=location,
+        required_attendees=required_attendees,
+        optional_attendees=optional_attendees,
+        reminder_minutes=reminder_minutes,
+    )
+
+
+def send_meeting_invitation(
+    item_id: str | None = None,
+    calendar_ref: str | None = None,
+    confirm_send: bool = False,
+) -> dict[str, Any]:
+    """发送一个已保存但尚未发送的会议邀请。
+
+    item_id/calendar_ref 必须且只能提供一个。只有显式设置 confirm_send=true 才会发送；
+    已发送或已取消的会议会被拒绝，避免重复邀请。
+    """
+    return service.send_meeting_invitation(
+        item_id=item_id,
+        calendar_ref=calendar_ref,
+        confirm_send=confirm_send,
     )
 
 
@@ -558,12 +612,12 @@ debug_mcp = create_mcp(include_debug_tools=True)
 
 
 def main() -> None:
-    """Start the production MCP server with the curated 19-tool surface."""
+    """Start the production MCP server with the curated 21-tool surface."""
     mcp.run(transport="stdio")
 
 
 def debug_main() -> None:
-    """Start the full 23-tool MCP server for development and troubleshooting."""
+    """Start the full 27-tool MCP server for development and troubleshooting."""
     debug_mcp.run(transport="stdio")
 
 

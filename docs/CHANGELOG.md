@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.6.16
+
+- Fixed `update_meeting` rejecting some valid unsent meetings when on-premises Exchange reports `IsMeeting=false` despite retained attendees. Meeting classification now uses attendee collections and MCP reference provenance as corroborating evidence.
+- Added explicit `reference_kind`, `update_tool`, and `send_tool` hints to meeting results so Agents do not confuse `calendar_ref` with `draft_ref`.
+- Changed accidental `update_email_draft(draft_ref=cal_...)` calls into a non-mutating structured routing response that recommends `update_meeting`, instead of surfacing a tool execution error.
+- Enriched calendar references with meeting/attendee metadata for resilient follow-up updates and sends.
+- Preserved UTF-8 CLI output compatibility on Windows CI and corrected the uploaded distribution artifact name to v0.6.16.
+
+## 0.6.15
+
+- 修复会议发送确认分支：`confirm=save`、`confirm=no` 和“不发送，仅保存”现在会真正创建 `SendToNone` 日历项目，不再重复返回 `needs_confirmation`。
+- 新增 Production 工具 `update_meeting`，可修改尚未发送会议的主题、正文、时间、地点、参会人和提醒，并保持不通知参会人。
+- 新增 Production 工具 `send_meeting_invitation`，要求 `confirm_send=true`，使用当前服务器 ChangeKey 向所有参会人发送邀请并保存已发送副本。
+- `calendar_ref` 更新/发送前会按 ItemId 获取服务器最新 ChangeKey，可兼容用户先在 Outlook 中手动编辑会议。
+- Production / Debug 工具面更新为 21 / 27。
+
 ## v0.6.14 release-check build hotfix
 
 - 修复 `run-release-check.cmd` 在已安装 `build` 时触发 PEP 517 隔离构建，进而在企业内网或离线环境中报 `BackendUnavailable: Cannot import setuptools.build_meta` 的问题。

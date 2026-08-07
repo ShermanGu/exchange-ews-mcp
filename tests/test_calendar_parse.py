@@ -171,3 +171,34 @@ def test_valid_dst_rules_are_preserved_in_normalized_shape() -> None:
     assert zone["daylight_utc_offset"] == "-07:00"
     assert zone["standard_transition"]["month"] == 11
     assert zone["daylight_transition"]["month"] == 3
+
+UPDATE = b'''<soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/"
+ xmlns:m="http://schemas.microsoft.com/exchange/services/2006/messages"
+ xmlns:t="http://schemas.microsoft.com/exchange/services/2006/types"><soap:Body>
+ <m:UpdateItemResponse><m:ResponseMessages><m:UpdateItemResponseMessage ResponseClass="Success">
+ <m:ResponseCode>NoError</m:ResponseCode><m:Items><t:CalendarItem><t:ItemId Id="CAL1" ChangeKey="CK2"/>
+ </t:CalendarItem></m:Items></m:UpdateItemResponseMessage></m:ResponseMessages></m:UpdateItemResponse>
+ </soap:Body></soap:Envelope>'''
+
+
+def test_update_meeting_parses_new_change_key_and_send_mode() -> None:
+    session = FakeSession([UPDATE, UPDATE])
+    client = EwsClient(config(), "secret", session=session)
+    updated = client.update_meeting(
+        item_id="CAL1",
+        change_key="CK1",
+        subject="Updated",
+    )
+    assert updated["status"] == "meeting_updated_not_sent"
+    assert updated["change_key"] == "CK2"
+    sent = client.send_meeting_invitation(
+        item_id="CAL1",
+        change_key="CK2",
+        subject="Updated",
+    )
+    assert sent["status"] == "meeting_invitation_sent"
+    assert sent["sent"] is True
+    first = session.payloads[0].decode("utf-8")
+    second = session.payloads[1].decode("utf-8")
+    assert 'SendMeetingInvitationsOrCancellations="SendToNone"' in first
+    assert 'SendMeetingInvitationsOrCancellations="SendToAllAndSaveCopy"' in second

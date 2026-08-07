@@ -51,6 +51,11 @@ class CalendarWorkflow:
                 "start": item.get("start"),
                 "end": item.get("end"),
                 "folder": "calendar",
+                "item_kind": "meeting",
+                "is_meeting": True,
+                "meeting_request_was_sent": item.get("meeting_request_was_sent"),
+                "required_attendees": item.get("required_attendees") or [],
+                "optional_attendees": item.get("optional_attendees") or [],
             },
             ttl_days=30,
         )
@@ -371,6 +376,9 @@ class CalendarWorkflow:
             result.as_dict(), self.config.calendar_time_zone
         )
         item["calendar_ref"] = self._calendar_ref(item)
+        item["reference_kind"] = "calendar"
+        item["update_tool"] = "update_meeting"
+        item["send_tool"] = "send_meeting_invitation"
         notices = [str(slot["user_notice"]) for slot in attendee_slots if slot.get("user_notice")]
         return {
             "status": "meeting_sent" if send_invitations else "meeting_saved_not_sent",
@@ -671,26 +679,52 @@ class CalendarWorkflow:
                 payload["window_end"] = None
             result = self.schedule_meeting(**payload)
         elif action == "schedule_meeting_send_confirmation":
-            confirmation = (selections.get("confirm") or selections.get("send") or "").strip().casefold()
-            if confirmation not in {"send", "yes", "true", "confirm", "确认", "发送"}:
+            confirmation = (
+                selections.get("confirm")
+                or selections.get("action")
+                or selections.get("send")
+                or ""
+            ).strip().casefold()
+            for separator in (" ", "\t", "\r", "\n", ",", "，", "、", ";", "；"):
+                confirmation = confirmation.replace(separator, "")
+            send_values = {
+                "send", "yes", "true", "confirm", "确认", "发送", "确认发送",
+            }
+            save_values = {
+                "save", "saveonly", "no", "false", "donotsend", "dontsend",
+                "保存", "仅保存", "只保存", "否", "不发送", "不需要发送",
+                "不发送仅保存", "不发送仅仅保存", "不发送只保存",
+            }
+            cancel_values = {"cancel", "取消", "放弃"}
+            if confirmation in cancel_values:
+                result = {
+                    "status": "cancelled",
+                    "created": False,
+                    "sent": False,
+                }
+            elif confirmation in send_values or confirmation in save_values:
+                result = self._create_meeting(
+                    attendee_slots=attendee_slots,
+                    subject=payload["subject"],
+                    body_html=payload["body_html"],
+                    start=state["selected_start"],
+                    end=state["selected_end"],
+                    location=payload.get("location"),
+                    optional_attendees=payload.get("optional_attendees") or [],
+                    send_invitations=confirmation in send_values,
+                    reminder_minutes=int(payload.get("reminder_minutes") or 15),
+                )
+            else:
                 return {
                     "status": "needs_confirmation",
                     "confirmation_type": "send_invitations",
                     "resume_token": resume_token,
-                    "user_notice": "请明确选择 confirm=send 后才会发送会议邀请。",
+                    "user_notice": (
+                        "请选择 confirm=send（创建并发送）、confirm=save（仅保存）"
+                        "或 confirm=cancel（取消）。"
+                    ),
                     "sent": False,
                 }
-            result = self._create_meeting(
-                attendee_slots=attendee_slots,
-                subject=payload["subject"],
-                body_html=payload["body_html"],
-                start=state["selected_start"],
-                end=state["selected_end"],
-                location=payload.get("location"),
-                optional_attendees=payload.get("optional_attendees") or [],
-                send_invitations=True,
-                reminder_minutes=int(payload.get("reminder_minutes") or 15),
-            )
         else:
             raise ValueError(f"不支持的日历恢复任务类型：{action!r}")
 
