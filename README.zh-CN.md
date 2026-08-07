@@ -7,38 +7,25 @@
 [![Platform: Windows](https://img.shields.io/badge/Platform-Windows-0078D4?logo=windows)](https://www.microsoft.com/windows/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
-一个面向本地部署 Microsoft Exchange 的“草稿优先”[模型上下文协议（MCP）](https://modelcontextprotocol.io/)服务器。它通过 EWS + NTLM 连接 Exchange，把密码保存在 Windows 凭据管理器中，并通过 stdio 向 MCP 客户端提供邮件、周报和日历工作流。
+📮 **让你的本地 Exchange 多一个真正能干活的 AI 助手。**
+
+还在为每周的**周报**发愁吗？还在邮箱里翻半天找上一封邮件？想约个会，还得一个个确认大家什么时候有空？
+
+**Exchange EWS MCP** 通过 **EWS + NTLM** 把 MCP Agent 直接连接到公司 Exchange。搜索邮件、创建草稿、回复、更新周报、查询空闲时间、创建和修改会议，都可以直接交给 Agent；真正重要的发送操作仍然由用户确认。
 
 > [!IMPORTANT]
-> 本项目面向开放 EWS + NTLM 的本地部署 Exchange 环境，不是 Exchange Online 或 Microsoft Graph 的 OAuth 客户端。
+> 本项目面向开放 **EWS + NTLM** 的本地部署 Exchange，不是 Exchange Online / Microsoft Graph 的 OAuth 客户端。
 
-## 主要能力
+## ✨ 能做什么？
 
-- **完全本地运行**：MCP Server 运行在用户 Windows 电脑上，不需要中转服务。
-- **邮件草稿优先**：新建、回复、转发和周报更新只创建草稿，不自动发送。
-- **会议发送需确认**：会议可以仅保存并继续修改；发送已保存会议邀请必须经过独立确认。
-- **Agent 工具面清晰**：Production 提供 21 个工具；6 个底层写入工具仅在 Debug profile 中出现。
-- **隐藏 Exchange 标识**：Agent 使用 `message_ref`、`draft_ref`、`calendar_ref` 和一次性流程 token，不直接处理 ItemId/ChangeKey。
-- **周报不让模型生成 HTML**：Agent 只看到压缩后的文本槽位和位置字符串；完整 HTML 始终由 Server 保存、填充和校验。
-- **复杂版面支持**：周报位置可描述合并单元格、多级表头、嵌套表格、标题、段落和列表。
-- **日期硬校验**：周报 Prompt 强制检查所有继承的周报周期日期，避免只更新正文而漏改日期。
+- 📧 搜索邮件、新建草稿、回复、转发、修改草稿、添加附件。
+- 👥 使用姓名全拼或完整邮箱解析收件人，并处理重名情况。
+- 📝 自动更新周报，同时尽量保留原来的 Outlook HTML 格式。
+- 📅 查询忙闲、找多人共同时间、创建/修改会议、确认后发送邀请。
+- 🔐 密码保存在 Windows 凭据管理器，不写进项目文件。
+- 🛡️ 邮件草稿优先，最后的“发送”仍然由你决定。
 
-## 安全边界
-
-| 边界 | 行为 |
-| --- | --- |
-| 凭据 | 密码保存到 Windows 凭据管理器，不进入项目文件或 MCP 返回值。 |
-| 邮件写入 | 新建、回复、转发和周报流程只创建未发送草稿。 |
-| 会议邀请 | 发送邀请需要显式二次确认。 |
-| Exchange 标识 | ItemId 和 ChangeKey 保留在有时效的本地引用之后。 |
-| 搜索歧义 | 返回候选项和可恢复确认令牌，不擅自选择。 |
-| 周报 HTML | Agent 不读取、不生成 HTML 模板，只能修改服务端给出的文本槽位。 |
-| 周报调用顺序 | 随机、30 分钟有效、只能使用一次的 token 强制执行 `get` 后再 `update`。 |
-| 附件 | 文件路径必须位于配置的 allow-list 目录，并在远端写入前完成验证。 |
-
-这些边界用于降低风险，但不能替代 Exchange 权限、管理员策略、终端安全、MCP 客户端控制和用户审核。
-
-## 架构
+## 🧭 架构
 
 ```mermaid
 flowchart LR
@@ -56,19 +43,22 @@ flowchart LR
     S --> K["Windows 凭据管理器"]
 ```
 
-组件边界见 [ARCHITECTURE.md](docs/ARCHITECTURE.md)，周报详细流程见 [WEEKLY-REPORT.md](docs/WEEKLY-REPORT.md)。
+Server 在 Windows 本地运行，通过 EWS 访问 Exchange。Agent 面对的是邮件、周报和日历这些高层功能，不需要直接处理底层 Exchange ID。
 
-## 环境要求
+---
+
+# 🚀 快速开始
+
+**克隆 → 安装 → 配置 Exchange → 在 MCP 客户端填一个 Server 路径。**
+
+## 1. 环境要求
 
 - Windows 10/11 或 Windows Server
 - Python 3.10–3.13
-- 本机能够访问 Exchange EWS 地址
-- Exchange 账号允许通过 NTLM 使用 EWS
-- 支持本地 stdio Server 的 MCP 客户端
+- 本机可以访问公司的 Exchange EWS 地址
+- Exchange 账号允许使用 EWS + NTLM
 
-## 快速开始
-
-### 1. 克隆并安装
+## 2. 安装
 
 ```powershell
 git clone https://github.com/ShermanGu/exchange-ews-mcp.git
@@ -76,22 +66,34 @@ cd exchange-ews-mcp
 .\install.cmd
 ```
 
-安装程序会创建 `.venv`、安装依赖、强制重装当前本地源码，并验证模块版本和 distribution metadata。
+`install.cmd` 会自动创建 `.venv` 并安装项目，不需要手动处理一长串依赖。
 
-### 2. 配置 Exchange
+## 3. 配置 Exchange
+
+运行配置向导：
 
 ```powershell
 .\.venv\Scripts\exchange-ews-mcp.exe configure
+```
+
+设置当前邮箱用户：
+
+```powershell
 .\.venv\Scripts\exchange-ews-mcp.exe set-current-user `
   --email "you@company.example" `
   --display-name "你的姓名"
+```
+
+检查配置和连接：
+
+```powershell
 .\.venv\Scripts\exchange-ews-mcp.exe status
 .\.venv\Scripts\exchange-ews-mcp.exe test
 ```
 
-`configure` 会提示输入 EWS URL、用户名和密码；密码保存到 Windows 凭据管理器。
+密码会保存到 **Windows 凭据管理器**，不会写进仓库。
 
-### 3. 配置日历偏好
+## 4. 配置日历偏好
 
 ```powershell
 .\.venv\Scripts\exchange-ews-mcp.exe set-calendar-preferences `
@@ -101,132 +103,115 @@ cd exchange-ews-mcp
   --slot-minutes 30
 ```
 
-EWS 底层保持 UTC 语义；适合展示给用户的结果会同时返回本地时间字段。
+## 5. 接入 MCP 客户端
 
-### 4. 生成 MCP 配置
+### ✅ 最推荐：直接使用 Server EXE
 
-```powershell
-.\.venv\Scripts\exchange-ews-mcp.exe mcp-config
+安装完成后，Production MCP Server 就在：
+
+```text
+<项目目录>\.venv\Scripts\exchange-ews-mcp-server.exe
 ```
 
-等价的 Production 配置：
+如果你的 MCP 客户端有 **Command / 命令** 和 **Arguments / 参数** 输入框，直接填：
+
+```text
+Command / 命令：
+D:\tools\exchange-ews-mcp\.venv\Scripts\exchange-ews-mcp-server.exe
+
+Arguments / 参数：
+留空
+```
+
+使用**绝对路径**，保存后重启 MCP 客户端即可。
+
+### 或者使用 JSON
 
 ```json
 {
   "mcpServers": {
     "exchange-ews": {
-      "command": "D:\\tools\\exchange-ews-mcp\\.venv\\Scripts\\python.exe",
-      "args": ["-m", "exchange_ews_mcp.server"]
+      "command": "D:\\tools\\exchange-ews-mcp\\.venv\\Scripts\\exchange-ews-mcp-server.exe"
     }
   }
 }
 ```
 
-修改配置后请完整退出并重启 MCP 客户端。日常使用 Production Server；只有排查 EWS 协议时才使用 `exchange_ews_mcp.debug_server`。
+也可以让 CLI 输出 MCP 配置信息：
 
-### 5. 验证安装
+```powershell
+.\.venv\Scripts\exchange-ews-mcp.exe mcp-config
+```
+
+## 6. 最后检查一下
 
 ```powershell
 .\.venv\Scripts\exchange-ews-mcp.exe version
 .\.venv\Scripts\exchange-ews-mcp.exe tool-list
 ```
 
-正式版本应为 `0.6.16`，Production 工具数量应为 `21`。
+预期版本：`0.6.16` · Production 工具数量：`21`
 
-## Production 工具
+🎉 到这里就完成了，可以直接让 Agent 开始干活。
 
-| 分类 | 工具 |
-| --- | --- |
-| 身份与邮件读取 | `get_current_user`、`list_emails`、`search_emails`、`get_email`、`find_email`、`resolve_people` |
-| 草稿工作流 | `compose_email`、`reply_to_email`、`forward_email`、`update_email_draft`、`add_attachment_to_draft`、`continue_action` |
-| 周报 | `get_weekly_report_context`、`update_weekly_report` |
-| 日历 | `get_user_availability`、`list_calendar_events`、`get_calendar_item`、`find_meeting_times`、`schedule_meeting`、`update_meeting`、`send_meeting_invitation` |
-
-Debug profile 额外提供：`resolve_names`、`create_draft`、`reply_as_draft`、`forward_as_draft`、`update_draft`、`create_meeting`。
-
-工具路由见 [AGENT-TOOLS.md](docs/AGENT-TOOLS.md)，Agent 接入见 [AGENT-CONNECTION.md](docs/AGENT-CONNECTION.md)。
-
-## 周报两步工作流
+## 💬 可以直接这样说
 
 ```text
-用户简短输入本周项目变化
-        ↓
-get_weekly_report_context
-  - 提取最多五周历史纯文本
-  - 生成可编辑文本槽位
-  - 每个槽位只返回 slot_id + text + location
-  - 返回一次性 weekly_flow_token
-        ↓
-Agent 全量比较历史、把口语改成正式周报文字、只选择变化槽位
-        ↓
-update_weekly_report
-  - 原子消费 token
-  - 将转义后的纯文本填回原 HTML
-  - 校验 HTML 标签结构完全未变
-  - 对最新周报创建一个原生 Reply All 草稿
+找到我最新一封周报，根据我这周的进展帮我更新一下。
 ```
 
-Agent 最终只提交：
-
-```json
-{
-  "weekly_flow_token": "weeklyflow_xxx",
-  "changes": [
-    {
-      "slot_id": "slot_0019_xxx",
-      "new_text": "完成接口联调。"
-    }
-  ]
-}
+```text
+给 wangxiaoming 写封邮件草稿，说联调已经完成，正式一点，别发送。
 ```
 
-Agent 不接触 HTML，也不需要复制旧文本。分割线、token 状态、多级表头位置、日期规则和格式限制见 [WEEKLY-REPORT.md](docs/WEEKLY-REPORT.md)。
-
-## 开发与测试
-
-```powershell
-py -3 -m venv .venv
-.\.venv\Scripts\python.exe -m pip install -e ".[dev]"
-.\run-release-check.cmd
+```text
+找一下我和 lixiaohong 下周最早都有空的1小时，创建会议，只保存先别发。
 ```
 
-`run-release-check.cmd` 会优先使用当前命令行中能够导入 pytest 的 `python`；如果不可用，再尝试已安装 pytest 的项目虚拟环境和 Windows `py -3` 启动器。分发包构建会继续使用同一个解释器并关闭 build isolation，避免企业内网或离线索引无法创建临时构建后端。该解释器需要具备 `setuptools`、`wheel`，并建议安装 `build`；安装 `.[dev]` 可一次补齐发布检查环境。
+## 🧰 主要功能
 
-GitHub Actions 会在 Python 3.10、3.11、3.12、3.13 上运行严格 UT，并构建、安装 Wheel。真实 Exchange DT 需要用户自己的测试邮箱和配置，见 [DT.md](docs/DT.md)。
-
-## 文档
-
-| 文档 | 用途 |
+| 场景 | Agent 可以做什么 |
 | --- | --- |
-| [README.md](README.md) | 英文项目主页。 |
-| [AGENT-CONNECTION.md](docs/AGENT-CONNECTION.md) | MCP 客户端接入和 Production profile 验收。 |
-| [AGENT-TOOLS.md](docs/AGENT-TOOLS.md) | 工具清单和 Agent 路由规则。 |
-| [ARCHITECTURE.md](docs/ARCHITECTURE.md) | 组件边界和安全属性。 |
-| [WEEKLY-REPORT.md](docs/WEEKLY-REPORT.md) | 周报提取、版面、Prompt 和更新契约。 |
-| [DT.md](docs/DT.md) | 真实 Exchange DT 指南。 |
-| [FRESH-START.md](docs/FRESH-START.md) | 全新安装和升级检查。 |
-| [CHANGELOG.md](docs/CHANGELOG.md) | 版本变更记录。 |
-| [RELEASE-AUDIT.md](docs/RELEASE-AUDIT.md) | v0.6.16 最终验证记录和产物哈希。 |
-| [RELEASE-CHECKLIST.md](docs/RELEASE-CHECKLIST.md) | 可复用的发布门禁和真实 DT 清单。 |
-| [CONTRIBUTING.zh-CN.md](docs/CONTRIBUTING.zh-CN.md) | 中文贡献指南。 |
-| [SECURITY.zh-CN.md](docs/SECURITY.zh-CN.md) | 中文安全报告策略。 |
+| 邮件 | 搜索/读取邮件、新建草稿、回复、转发、修改草稿、添加附件 |
+| 人员 | 收件人解析、重名候选处理 |
+| 周报 | 读取历史周报，在保留原格式的情况下创建新的 Reply All 草稿 |
+| 日历 | 查询忙闲、找共同时间、读取日程、创建/修改会议、发送邀请 |
+
+核心工作流工具：`get_weekly_report_context` → `update_weekly_report`；会议修改使用 `update_meeting`，确认发送使用 `send_meeting_invitation`。
+
+## 📝 周报流程
+
+```text
+找到上一封周报
+      ↓
+读取最近几周内容
+      ↓
+Agent 判断哪些地方发生变化
+      ↓
+只更新相关文字
+      ↓
+创建新的 Reply All 草稿
+```
+
+Agent **不会重新生成整份 HTML**。原来的表格和格式由 Server 保留，只替换需要更新的文字。
+
+## 🔒 安全设计，简单说
+
+- 邮件默认先生成草稿。
+- 会议邀请发送前需要明确确认。
+- 密码保存在 Windows 凭据管理器。
+- 重名或多个会议时间会让用户确认，不会直接猜。
+
+## 📚 更多文档
+
+[Agent 接入](docs/AGENT-CONNECTION.md) · [Agent 工具](docs/AGENT-TOOLS.md) · [架构](docs/ARCHITECTURE.md) · [周报工作流](docs/WEEKLY-REPORT.md) · [真实 Exchange DT](docs/DT.md) · [版本记录](docs/CHANGELOG.md)
+
+开发相关：[贡献指南](docs/CONTRIBUTING.zh-CN.md) · [安全说明](docs/SECURITY.zh-CN.md)
 
 ## 已知限制
 
-- 主要运行平台是 Windows，因为凭据存储依赖 Windows 凭据管理器，认证使用 NTLM。
-- EWS 行为取决于 Exchange 版本、邮箱策略和服务器配置。
-- 周报流程当前要求 EWS 返回 HTML，并能识别 `WordSection1` 和回复历史边界；纯文本正文会安全拒绝，而不是冒险修改。
-- RTF 邮件可能被 Exchange 转换成 HTML，不同 Outlook/Exchange 版本的结果可能不同。
-- 周报当前只修改已有文本槽位，不新增或删除表格行、图片或其他 HTML 结构。
-- 本项目不会绕过邮箱权限或组织安全控制。
-- Exchange Online 通常应优先使用 Microsoft Graph 和现代身份认证。
+主要运行平台是 Windows。实际 EWS 行为取决于 Exchange 版本和邮箱策略。周报编辑目前要求 EWS 返回可识别的 Outlook/Word HTML 回复结构。Exchange Online 通常更适合 Microsoft Graph + 现代身份认证。
 
-## 参与贡献与安全报告
-
-欢迎贡献，请阅读 [CONTRIBUTING.zh-CN.md](docs/CONTRIBUTING.zh-CN.md) 或 [CONTRIBUTING.md](docs/CONTRIBUTING.md)。
-
-请勿在公开 Issue 中披露漏洞，请按照 [SECURITY.zh-CN.md](docs/SECURITY.zh-CN.md) 或 [SECURITY.md](docs/SECURITY.md) 私下报告。
-
-## 许可证
+## License
 
 本项目使用 [MIT License](LICENSE)。
