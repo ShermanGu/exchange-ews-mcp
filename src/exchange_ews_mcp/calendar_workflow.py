@@ -377,7 +377,7 @@ class CalendarWorkflow:
         )
         item["calendar_ref"] = self._calendar_ref(item)
         item["reference_kind"] = "calendar"
-        item["update_tool"] = "update_meeting"
+        item["update_tool"] = "save_meeting"
         item["send_tool"] = "send_meeting_invitation"
         notices = [str(slot["user_notice"]) for slot in attendee_slots if slot.get("user_notice")]
         return {

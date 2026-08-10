@@ -1,4 +1,4 @@
-# Exchange EWS MCP v0.6.16
+# Exchange EWS MCP v0.7.0
 
 [English](README.md) | **简体中文**
 
@@ -150,7 +150,7 @@ Arguments / 参数：
 .\.venv\Scripts\exchange-ews-mcp.exe tool-list
 ```
 
-预期版本：`0.6.16` · Production 工具数量：`21`
+预期版本：`0.7.0` · Production 工具数量：`11`
 
 🎉 到这里就完成了，可以直接让 Agent 开始干活。
 
@@ -177,7 +177,7 @@ Arguments / 参数：
 | 周报 | 读取历史周报，在保留原格式的情况下创建新的 Reply All 草稿 |
 | 日历 | 查询忙闲、找共同时间、读取日程、创建/修改会议、发送邀请 |
 
-核心工作流工具：`get_weekly_report_context` → `update_weekly_report`；会议修改使用 `update_meeting`，确认发送使用 `send_meeting_invitation`。
+精简邮件门面使用 `search_mail`、`read_mail`、`save_mail_draft` 和 `edit_mail_draft`；周报仍强制使用 `get_weekly_report_context` → `update_weekly_report`；会议创建和修改统一使用 `save_meeting`，确认发送使用 `send_meeting_invitation`。
 
 ## 📝 周报流程
 

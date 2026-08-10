@@ -1,30 +1,20 @@
 from __future__ import annotations
 
-# Production profile: the tools an Agent should normally see. It keeps the
-# semantic workflow tools plus read-only inspection primitives, while hiding
-# duplicate low-level write operations that are easy for an Agent to misuse.
+# Production profile: a compact Agent-facing facade.  Low-level and overlapping
+# mail/calendar primitives remain available to the CLI and internal workflows,
+# but are deliberately not registered as MCP tools.
 PRODUCTION_TOOL_NAMES: tuple[str, ...] = (
-    "get_current_user",
-    "list_emails",
-    "search_emails",
-    "get_email",
-    "add_attachment_to_draft",
-    "resolve_people",
-    "compose_email",
-    "find_email",
-    "reply_to_email",
+    "search_mail",
+    "read_mail",
+    "save_mail_draft",
+    "edit_mail_draft",
+    "continue_action",
     "get_weekly_report_context",
     "update_weekly_report",
-    "forward_email",
-    "continue_action",
-    "update_email_draft",
-    "get_user_availability",
-    "list_calendar_events",
-    "get_calendar_item",
-    "update_meeting",
-    "send_meeting_invitation",
+    "read_calendar",
     "find_meeting_times",
-    "schedule_meeting",
+    "save_meeting",
+    "send_meeting_invitation",
 )
 
 # Debug profile only: deterministic EWS write primitives retained for CLI, DT,

@@ -98,6 +98,8 @@ class SemanticMailWorkflow:
 
     def _draft_dict(self, result: Any) -> dict[str, Any]:
         data = result.as_dict()
+        data["reference_kind"] = "draft"
+        data["update_tool"] = "edit_mail_draft"
         data["draft_ref"] = self.store.upsert_reference(
             kind="draft",
             external_key=result.item_id,
@@ -550,17 +552,22 @@ class SemanticMailWorkflow:
         sender_query: str | None = None,
         participant_query: str | None = None,
         subject_contains: str | None = None,
+        unread_only: bool | None = None,
+        has_attachments: bool | None = None,
         after: str | None = None,
         before: str | None = None,
         limit: int = 20,
+        offset: int = 0,
         lookback_days: int = DEFAULT_HISTORY_DAYS,
     ) -> dict[str, Any]:
         criteria: dict[str, Any] = {
             "subject_contains": subject_contains,
+            "unread_only": unread_only,
+            "has_attachments": has_attachments,
             "after": after,
             "before": before,
             "limit": limit,
-            "offset": 0,
+            "offset": offset,
         }
         person_resolution: dict[str, Any] = {}
         for field, query in (("sender", sender_query), ("participant_contains", participant_query)):
@@ -577,9 +584,12 @@ class SemanticMailWorkflow:
                             "sender_query": sender_query,
                             "participant_query": participant_query,
                             "subject_contains": subject_contains,
+                            "unread_only": unread_only,
+                            "has_attachments": has_attachments,
                             "after": after,
                             "before": before,
                             "limit": limit,
+                            "offset": offset,
                             "lookback_days": lookback_days,
                         },
                         "person_resolution": person_resolution,
@@ -1228,9 +1238,12 @@ class SemanticMailWorkflow:
                 sender_query=sender_query,
                 participant_query=participant_query,
                 subject_contains=payload.get("subject_contains"),
+                unread_only=payload.get("unread_only"),
+                has_attachments=payload.get("has_attachments"),
                 after=payload.get("after"),
                 before=payload.get("before"),
                 limit=int(payload.get("limit") or 20),
+                offset=int(payload.get("offset") or 0),
                 lookback_days=int(payload.get("lookback_days") or DEFAULT_HISTORY_DAYS),
             )
         elif action in {"reply_to_email", "forward_email"}:

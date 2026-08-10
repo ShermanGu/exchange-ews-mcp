@@ -1,11 +1,11 @@
-# v0.6.16 release checklist
+# v0.7.0 release checklist
 
-This checklist defines the final repository and package gate for Exchange EWS MCP v0.6.16.
+This checklist defines the final repository and package gate for Exchange EWS MCP v0.7.0.
 
 ## Repository contract
 
-- [ ] `src/exchange_ews_mcp/__init__.py` reports `0.6.16`.
-- [ ] Production and debug profiles expose 21 and 27 tools respectively.
+- [ ] `src/exchange_ews_mcp/__init__.py` reports `0.7.0`.
+- [ ] Production and debug profiles expose 11 and 17 tools respectively.
 - [ ] English and Simplified Chinese README files describe the same supported release.
 - [ ] `AGENT-CONNECTION.md` and `AGENT-TOOLS.md` include both weekly-report tools.
 - [ ] CI covers Python 3.10–3.13 on Windows and builds distributions.
@@ -48,4 +48,4 @@ Full DT can create unsent mail, reply, forward, weekly-report Reply All, and mee
 - [ ] Install the built wheel into a clean Windows virtual environment.
 - [ ] Run `exchange-ews-mcp version` and both production/debug `tool-list` commands.
 - [ ] Inspect `RELEASE-AUDIT.md` and `SHA256SUMS.txt`.
-- [ ] Tag the exact commit as `v0.6.16` only after all environment-owned live DT checks pass.
+- [ ] Tag the exact commit as `v0.7.0` only after all environment-owned live DT checks pass.

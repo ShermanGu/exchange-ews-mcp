@@ -1,4 +1,4 @@
-# Live Exchange development tests — v0.6.16
+# Live Exchange development tests — v0.7.0
 
 DT runs against a user-owned Exchange mailbox. It is intentionally separate from CI and unit tests because it requires real credentials, real mailbox data, and an accessible EWS endpoint.
 
@@ -20,13 +20,13 @@ DT runs against a user-owned Exchange mailbox. It is intentionally separate from
 .\.venv\Scripts\exchange-ews-mcp.exe test
 ```
 
-Expected version: `0.6.16`.
+Expected version: `0.7.0`.
 
 ## 2. Configure DT objects
 
 Choose:
 
-- one or more person queries supported by `resolve_people`;
+- one or more person queries supported by the internal semantic resolver;
 - one or more real sender email addresses with searchable mail;
 - a mailbox address that can receive draft test messages;
 - a distinctive weekly-report subject keyword for `weekly-report-v06`.
@@ -152,7 +152,7 @@ A release candidate is ready for the user's Exchange environment only when:
 - no mail was sent unexpectedly;
 - no meeting invitation was sent unexpectedly;
 - the weekly draft preserves formatting, images, and native reply history;
-- the Agent-facing tool list is exactly 21 tools.
+- the Agent-facing tool list is exactly 11 tools.
 
 ## 9. Common failures
 

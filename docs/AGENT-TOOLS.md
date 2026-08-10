@@ -1,53 +1,44 @@
-# Agent tool surface — v0.6.16
+# Agent tool surface — v0.7.0
 
-Normal Agents must use the **production** stdio server. The debug server is reserved for deterministic EWS troubleshooting and development tests.
+Normal Agents use the compact **production** stdio server. The debug server is reserved for deterministic EWS troubleshooting and development tests.
 
-## Production profile: 21 tools
+## Production profile: 11 tools
 
-### Identity and mail reads
-
-| Tool | Purpose |
-| --- | --- |
-| `get_current_user` | Return the configured mailbox identity and `person_ref`. |
-| `list_emails` | List message summaries from supported standard folders. |
-| `search_emails` | Search messages by folders, people, subject, time, attachment state, and related filters. |
-| `get_email` | Read a message body, recipients, and attachment metadata. |
-| `find_email` | High-level message resolution that returns a `message_ref` or confirmation candidates. |
-| `resolve_people` | Resolve full emails or supported name queries with mail-history disambiguation. |
-
-### Draft workflows
+### Mail
 
 | Tool | Purpose | Write behavior |
 | --- | --- | --- |
-| `compose_email` | Resolve recipients and create a new HTML draft. | Draft only |
-| `reply_to_email` | Resolve a source message and create a reply or Reply All draft. | Draft only |
-| `forward_email` | Resolve source and recipients and create a forward draft. | Draft only |
-| `update_email_draft` | Modify an email draft through `draft_ref`; never pass `calendar_ref`. A calendar ref returns a non-mutating route hint to `update_meeting`. | Draft only |
-| `add_attachment_to_draft` | Add an allow-listed local file to a draft. | Draft only |
-| `continue_action` | Resume a candidate choice, time choice, or send confirmation. | Depends on pending action |
+| `search_mail` | List or search inbox/sent mail, resolve people, and return stable `message_ref` values. | Read-only |
+| `read_mail` | Read a message or draft through `message_ref`/`draft_ref`. | Read-only |
+| `save_mail_draft` | Create, reply, Reply All, or forward according to `mode`. | Draft only |
+| `edit_mail_draft` | Modify a draft and optionally append prevalidated local attachments. | Draft only |
+| `continue_action` | Resume a pending person, message, time, or confirmation selection. | Depends on the stored action; never sends email |
+
+`search_mail` replaces the old list/search/find split. With no filters it returns recent mail; people are resolved inside the workflow. `save_mail_draft` accepts `compose`, `reply`, `reply_all`, or `forward`. Reply and forward require a `source_message_ref`, so search and selection happen before any draft write.
 
 ### Weekly reports
 
 | Tool | Purpose | Write behavior |
 | --- | --- | --- |
-| `get_weekly_report_context` | Mandatory first step for each new weekly-report request. Returns up to five historical sections, compact text slots, a full Agent prompt, and one single-use token. | Read-only Exchange access |
-| `update_weekly_report` | Mandatory second step. Consumes the token, fills selected text slots into server-owned HTML, validates structure, and creates a native Reply All draft. | Draft only |
+| `get_weekly_report_context` | Mandatory first step for each new request. Returns compact text slots, full Agent instructions, history, and a single-use token. | Read-only Exchange access |
+| `update_weekly_report` | Mandatory second step. Consumes the token, updates selected server-owned HTML text slots, validates structure, and creates a native Reply All draft. | Draft only |
+
+The weekly-report two-step contract is unchanged from v0.6.16.
 
 ### Calendar
 
 | Tool | Purpose | Write behavior |
 | --- | --- | --- |
-| `get_user_availability` | Query attendee/resource availability and EWS WorkingHours. | Read-only |
-| `list_calendar_events` | List current-user calendar items in a time window. | Read-only |
-| `get_calendar_item` | Read an item through `calendar_ref`. | Read-only |
-| `find_meeting_times` | Resolve attendees and find common slots within working hours. | Read-only |
-| `schedule_meeting` | Resolve attendees/time and create a meeting. A send request pauses for an explicit send/save/cancel decision. | Default `SendToNone` |
-| `update_meeting` | Update an unsent meeting through `calendar_ref`. Meeting classification uses attendees and MCP provenance in addition to Exchange `IsMeeting`. | `SendToNone`; no attendee notification |
-| `send_meeting_invitation` | Send invitations for an existing unsent meeting after `confirm_send=true`. | `SendToAllAndSaveCopy` |
+| `read_calendar` | List a time window or read one item through `calendar_ref`. | Read-only |
+| `find_meeting_times` | Resolve attendees and return common free slots plus availability details. | Read-only |
+| `save_meeting` | Create or update a meeting at an exact time. It always keeps invitations unsent. | `SendToNone` |
+| `send_meeting_invitation` | Send an existing unsent meeting only after `confirm_send=true`. | `SendToAllAndSaveCopy` |
+
+Use `find_meeting_times` before `save_meeting` when the user has not selected an exact start/end. `save_meeting` never sends. Sending remains a separate, explicit tool boundary.
 
 ## Debug-only tools
 
-The debug server adds six low-level primitives:
+The debug server adds six low-level write primitives:
 
 ```text
 resolve_names
@@ -58,27 +49,24 @@ update_draft
 create_meeting
 ```
 
-They duplicate safer high-level workflows and should not be visible to normal Agents.
+They bypass parts of the compact semantic facade and should not be visible to normal Agents.
 
 ## Recommended routing
 
 ```text
-Read recent mail                    → list_emails / search_emails / get_email
-Resolve a person                    → resolve_people
-Create a new message                → compose_email
-Reply to a known message            → reply_to_email(message_ref=...)
-Find then reply                     → find_email → reply_to_email
-Forward a message                   → forward_email
-Resolve an ambiguity                → continue_action
-Modify an existing draft            → update_email_draft
-Add an attachment                   → add_attachment_to_draft
-Update a weekly report              → get_weekly_report_context → update_weekly_report
-Find common meeting time            → find_meeting_times
-Create meeting without sending      → schedule_meeting(send_invitations=false)
-Save after send confirmation         → continue_action(confirm=save)
-Update a saved unsent meeting        → update_meeting(calendar_ref=...)
-Send a saved meeting invitation      → send_meeting_invitation(calendar_ref=..., confirm_send=true)
-Create and send in one workflow      → schedule_meeting → continue_action(confirm=send)
+List or find mail                   → search_mail
+Read a selected message            → read_mail(message_ref=...)
+Create a new draft                 → save_mail_draft(mode=compose)
+Reply or Reply All                 → search_mail → save_mail_draft(mode=reply/reply_all)
+Forward a message                  → search_mail → save_mail_draft(mode=forward)
+Modify draft / add attachments     → edit_mail_draft
+Resolve an ambiguity               → continue_action
+Update a weekly report             → get_weekly_report_context → update_weekly_report
+List or read calendar items        → read_calendar
+Find common meeting time           → find_meeting_times
+Create a meeting without sending   → save_meeting
+Update an unsent meeting           → save_meeting(calendar_ref=...)
+Send a saved meeting invitation    → send_meeting_invitation(calendar_ref=..., confirm_send=true)
 ```
 
 ## Weekly-report routing contract
@@ -95,7 +83,7 @@ The Agent receives compact slots:
 }
 ```
 
-It must compare all supplied history, rewrite the user's conversational facts into formal report language, check all inherited reporting-period dates, and call update with only:
+It must compare all supplied history, rewrite conversational facts into formal report language, check inherited reporting-period dates, and call update with only:
 
 ```json
 {
@@ -105,10 +93,6 @@ It must compare all supplied history, rewrite the user's conversational facts in
 ```
 
 Do not return HTML. Do not copy an old token. Do not write “no change” into a slot. Do not modify a header unless the user explicitly requests a header/date change.
-
-## Folder precedence
-
-For tools that accept both `folder` and `folders`, a non-empty `folders` list overrides `folder`. Use supported canonical folder values documented by the tool schema.
 
 ## Inspect the active surface
 

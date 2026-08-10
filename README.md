@@ -1,4 +1,4 @@
-# Exchange EWS MCP v0.6.16
+# Exchange EWS MCP v0.7.0
 
 **English** | [简体中文](README.zh-CN.md)
 
@@ -148,7 +148,7 @@ You can also run:
 .\.venv\Scripts\exchange-ews-mcp.exe tool-list
 ```
 
-Expected version: `0.6.16` · Production tools: `21`
+Expected version: `0.7.0` · Production tools: `11`
 
 🎉 Done — your Agent can now work with Exchange.
 
@@ -175,7 +175,7 @@ Find the earliest one-hour slot next week when lixiaohong and I are both free, c
 | Weekly reports | Read recent history and create an updated Reply All draft without rebuilding the HTML template |
 | Calendar | Availability, common slots, calendar reads, create/update meetings, send invitations |
 
-Core workflow tools: `get_weekly_report_context` → `update_weekly_report`. Calendar meeting editing uses `update_meeting` and confirmed sending uses `send_meeting_invitation`.
+The compact mail facade uses `search_mail`, `read_mail`, `save_mail_draft`, and `edit_mail_draft`. Weekly reports keep the mandatory `get_weekly_report_context` → `update_weekly_report` sequence. Calendar creation/editing uses `save_meeting`; confirmed sending uses `send_meeting_invitation`.
 
 ## 📝 Weekly reports
 

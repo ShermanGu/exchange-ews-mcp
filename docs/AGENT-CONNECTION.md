@@ -1,4 +1,4 @@
-# Connect an Agent to Exchange EWS MCP v0.6.16
+# Connect an Agent to Exchange EWS MCP v0.7.0
 
 ## 1. Install and verify
 
@@ -13,8 +13,8 @@ cd D:\tools\exchange-ews-mcp
 Expected:
 
 ```text
-version = 0.6.16
-visible_tool_count = 21
+version = 0.7.0
+visible_tool_count = 11
 ```
 
 The reported package and Python paths must be inside the current repository's `.venv`.
@@ -64,29 +64,19 @@ Equivalent form:
 
 ## 4. Expected production tools
 
-The Agent should see exactly these 21 tools:
+The Agent should see exactly these 11 tools:
 
 ```text
-get_current_user
-list_emails
-search_emails
-get_email
-add_attachment_to_draft
-resolve_people
-compose_email
-find_email
-reply_to_email
+search_mail
+read_mail
+save_mail_draft
+edit_mail_draft
+continue_action
 get_weekly_report_context
 update_weekly_report
-forward_email
-continue_action
-update_email_draft
-get_user_availability
-list_calendar_events
-get_calendar_item
+read_calendar
 find_meeting_times
-schedule_meeting
-update_meeting
+save_meeting
 send_meeting_invitation
 ```
 
@@ -118,7 +108,7 @@ Expected safety behavior:
 - “项目B没变化” does not create a “no change” slot edit;
 - reporting-period dates are reviewed and updated;
 - choosing save/no at the meeting send decision creates an unsent calendar item instead of returning another pending confirmation;
-- `update_meeting` changes an unsent meeting without notifying attendees;
+- `save_meeting` creates or changes a meeting without notifying attendees;
 - `send_meeting_invitation` rejects calls without explicit confirmation and rejects already-sent meetings.
 
 ## 6. Weekly-report Agent requirements

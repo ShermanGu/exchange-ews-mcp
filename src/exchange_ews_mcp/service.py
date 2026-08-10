@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from email.utils import parseaddr
 from typing import Any
 
 from .config import effective_company_domains, load_config
@@ -51,7 +52,7 @@ def _attach_message_ref(item: dict[str, Any], store: ReferenceStore) -> dict[str
         result[f"{kind}_ref"] = ref
         result["reference_kind"] = kind
         if kind == "draft":
-            result["update_tool"] = "update_email_draft"
+            result["update_tool"] = "edit_mail_draft"
             result["message_ref"] = store.upsert_reference(
                 kind="message",
                 external_key=str(item_id),
@@ -64,7 +65,7 @@ def _attach_message_ref(item: dict[str, Any], store: ReferenceStore) -> dict[str
 def _draft_result(result: Any, store: ReferenceStore) -> dict[str, Any]:
     data = result.as_dict()
     data["reference_kind"] = "draft"
-    data["update_tool"] = "update_email_draft"
+    data["update_tool"] = "edit_mail_draft"
     data["draft_ref"] = store.upsert_reference(
         kind="draft",
         external_key=result.item_id,
@@ -340,9 +341,12 @@ def find_email(
     sender_query: str | None = None,
     participant_query: str | None = None,
     subject_contains: str | None = None,
+    unread_only: bool | None = None,
+    has_attachments: bool | None = None,
     after: str | None = None,
     before: str | None = None,
     limit: int = 20,
+    offset: int = 0,
     lookback_days: int = 365,
 ) -> dict[str, Any]:
     return configured_workflow().find_email(
@@ -350,9 +354,12 @@ def find_email(
         sender_query=sender_query,
         participant_query=participant_query,
         subject_contains=subject_contains,
+        unread_only=unread_only,
+        has_attachments=has_attachments,
         after=after,
         before=before,
         limit=limit,
+        offset=offset,
         lookback_days=lookback_days,
     )
 
@@ -467,6 +474,175 @@ def continue_action(*, resume_token: str, selections: dict[str, str]) -> dict[st
     )
 
 
+def search_mail(
+    *,
+    folders: list[str] | None = None,
+    sender_query: str | None = None,
+    participant_query: str | None = None,
+    subject_contains: str | None = None,
+    unread_only: bool | None = None,
+    has_attachments: bool | None = None,
+    after: str | None = None,
+    before: str | None = None,
+    limit: int = 20,
+    offset: int = 0,
+    lookback_days: int = 365,
+) -> dict[str, Any]:
+    """Unified semantic mail discovery for the compact Agent surface."""
+    return find_email(
+        folders=folders,
+        sender_query=sender_query,
+        participant_query=participant_query,
+        subject_contains=subject_contains,
+        unread_only=unread_only,
+        has_attachments=has_attachments,
+        after=after,
+        before=before,
+        limit=limit,
+        offset=offset,
+        lookback_days=lookback_days,
+    )
+
+
+def read_mail(
+    *,
+    message_ref: str | None = None,
+    draft_ref: str | None = None,
+    max_body_chars: int = 50000,
+) -> dict[str, Any]:
+    """Read a message or draft through an opaque Agent-facing reference."""
+    return get_email(
+        message_ref=message_ref,
+        draft_ref=draft_ref,
+        max_body_chars=max_body_chars,
+    )
+
+
+def save_mail_draft(
+    *,
+    mode: str,
+    body_html: str,
+    source_message_ref: str | None = None,
+    to_queries: list[str] | None = None,
+    cc_queries: list[str] | None = None,
+    bcc_queries: list[str] | None = None,
+    subject: str | None = None,
+    attachments: list[str] | None = None,
+    lookback_days: int = 365,
+) -> dict[str, Any]:
+    """Create, reply to, or forward an email as an unsent draft."""
+    operation = str(mode or "").strip().casefold()
+    allowed = {"compose", "reply", "reply_all", "forward"}
+    if operation not in allowed:
+        raise ValueError("mode 必须是 compose、reply、reply_all 或 forward。")
+    if not body_html.strip():
+        raise ValueError("body_html 不能为空。")
+
+    recipients_supplied = any(value for value in (to_queries, cc_queries, bcc_queries))
+    if operation == "compose":
+        if source_message_ref:
+            raise ValueError("compose 模式不能提供 source_message_ref。")
+        if not to_queries:
+            raise ValueError("compose 模式必须提供至少一个 to_queries 收件人。")
+        if not str(subject or "").strip():
+            raise ValueError("compose 模式必须提供非空 subject。")
+        result = compose_email(
+            to_queries=to_queries,
+            cc_queries=cc_queries,
+            bcc_queries=bcc_queries,
+            subject=str(subject),
+            body_html=body_html,
+            attachments=attachments,
+            lookback_days=lookback_days,
+        )
+    else:
+        if not source_message_ref:
+            raise ValueError(f"{operation} 模式必须提供 source_message_ref。")
+        if subject is not None:
+            raise ValueError(f"{operation} 模式不接受 subject；创建草稿后使用 edit_mail_draft 修改。")
+        if attachments:
+            raise ValueError(f"{operation} 模式不直接添加附件；创建草稿后使用 edit_mail_draft。")
+        if operation in {"reply", "reply_all"}:
+            if recipients_supplied:
+                raise ValueError(f"{operation} 模式不接受收件人参数。")
+            result = reply_to_email(
+                message_ref=source_message_ref,
+                body_html=body_html,
+                reply_all=operation == "reply_all",
+                lookback_days=lookback_days,
+            )
+        else:
+            if not to_queries:
+                raise ValueError("forward 模式必须提供至少一个 to_queries 收件人。")
+            result = forward_email(
+                message_ref=source_message_ref,
+                to_queries=to_queries,
+                cc_queries=cc_queries,
+                bcc_queries=bcc_queries,
+                body_html=body_html,
+                lookback_days=lookback_days,
+            )
+    return {**result, "mail_draft_mode": operation, "sent": False}
+
+
+def edit_mail_draft(
+    *,
+    draft_ref: str,
+    subject: str | None = None,
+    body_html: str | None = None,
+    to: list[str] | None = None,
+    cc: list[str] | None = None,
+    bcc: list[str] | None = None,
+    importance: str | None = None,
+    attachments: list[str] | None = None,
+) -> dict[str, Any]:
+    """Update one draft and optionally append allow-listed local files."""
+    update_requested = any(
+        value is not None for value in (subject, body_html, to, cc, bcc, importance)
+    )
+    attachment_values = list(attachments or [])
+    if not update_requested and not attachment_values:
+        raise ValueError("至少需要提供一个草稿字段或附件。")
+    if len(attachment_values) > 20:
+        raise ValueError("attachments 最多允许 20 个文件。")
+
+    # Validate every path before the first Exchange write so a bad later path
+    # cannot leave the draft partially modified.
+    validator = configured_client()
+    canonical_attachments = [
+        validator.validate_attachment_path(path) for path in attachment_values
+    ]
+
+    draft_update: dict[str, Any] | None = None
+    if update_requested:
+        draft_update = update_email_draft(
+            draft_ref=draft_ref,
+            subject=subject,
+            body_html=body_html,
+            to=to,
+            cc=cc,
+            bcc=bcc,
+            importance=importance,
+        )
+        if draft_update.get("status") == "wrong_reference_type":
+            return draft_update
+
+    attachment_results: list[dict[str, Any]] = []
+    current_ref = draft_ref
+    for path in canonical_attachments:
+        attached = add_attachment_to_draft(draft_ref=current_ref, file_path=path)
+        current_ref = str(attached.get("draft_ref") or current_ref)
+        attachment_results.append(attached)
+
+    return {
+        "status": "draft_updated",
+        "draft_ref": current_ref,
+        "draft": draft_update,
+        "attachments": attachment_results,
+        "sent": False,
+    }
+
+
 def update_email_draft(**kwargs: Any) -> dict[str, Any]:
     """Update an email draft only; calendar references are routed back to the Agent safely."""
     draft_ref = str(kwargs.get("draft_ref") or "").strip()
@@ -477,10 +653,10 @@ def update_email_draft(**kwargs: Any) -> dict[str, Any]:
                 "status": "wrong_reference_type",
                 "reference_kind": "calendar",
                 "calendar_ref": draft_ref,
-                "recommended_tool": "update_meeting",
+                "recommended_tool": "save_meeting",
                 "message": (
                     "该引用属于日历项目，未执行邮件草稿更新。"
-                    "请使用 update_meeting(calendar_ref=...) 修改会议。"
+                    "请使用 save_meeting(calendar_ref=...) 修改会议。"
                 ),
             }
         if stored.kind != "draft":
@@ -512,7 +688,7 @@ def _calendar_result(item: dict[str, Any], store: ReferenceStore) -> dict[str, A
     meeting_evidence = item.get("is_meeting") is True or bool(required or optional)
     result["reference_kind"] = "calendar"
     if meeting_evidence:
-        result["update_tool"] = "update_meeting"
+        result["update_tool"] = "save_meeting"
         result["send_tool"] = "send_meeting_invitation"
     item_id = str(item.get("item_id") or "").strip()
     if item_id:
@@ -859,3 +1035,100 @@ def find_meeting_times(**kwargs: Any) -> dict[str, Any]:
 
 def schedule_meeting(**kwargs: Any) -> dict[str, Any]:
     return configured_calendar_workflow().schedule_meeting(**kwargs)
+
+
+def read_calendar(
+    *,
+    start: str | None = None,
+    end: str | None = None,
+    calendar_ref: str | None = None,
+    limit: int = 100,
+) -> dict[str, Any]:
+    """List a time window or read one item through a calendar reference."""
+    if calendar_ref:
+        if start is not None or end is not None:
+            raise ValueError("提供 calendar_ref 时不能同时提供 start/end。")
+        return {"read_mode": "item", **get_calendar_item(calendar_ref=calendar_ref)}
+    if start is None or end is None:
+        raise ValueError("未提供 calendar_ref 时必须同时提供 start 和 end。")
+    return {
+        "read_mode": "window",
+        **list_calendar_events(start=start, end=end, limit=limit),
+    }
+
+
+def _full_email(value: str) -> str | None:
+    raw = str(value or "").strip()
+    _, parsed = parseaddr(raw)
+    return parsed if parsed and "@" in parsed and parsed == raw else None
+
+
+def save_meeting(
+    *,
+    calendar_ref: str | None = None,
+    attendee_queries: list[str] | None = None,
+    subject: str | None = None,
+    body_html: str | None = None,
+    start: str | None = None,
+    end: str | None = None,
+    location: str | None = None,
+    optional_attendees: list[str] | None = None,
+    check_availability: bool = True,
+    reminder_minutes: int | None = None,
+    lookback_days: int = 365,
+) -> dict[str, Any]:
+    """Create or update a meeting while always keeping invitations unsent."""
+    attendees = list(attendee_queries or [])
+    optional = list(optional_attendees or [])
+    if calendar_ref:
+        if attendees:
+            invalid = [value for value in attendees if _full_email(value) is None]
+            if invalid:
+                raise ValueError(
+                    "更新会议参会人时 attendee_queries 只接受完整邮箱："
+                    + ", ".join(invalid)
+                )
+        invalid_optional = [value for value in optional if _full_email(value) is None]
+        if invalid_optional:
+            raise ValueError(
+                "更新会议时 optional_attendees 只接受完整邮箱："
+                + ", ".join(invalid_optional)
+            )
+        return update_meeting(
+            calendar_ref=calendar_ref,
+            subject=subject,
+            body_html=body_html,
+            start=start,
+            end=end,
+            location=location,
+            required_attendees=attendees if attendee_queries is not None else None,
+            optional_attendees=optional if optional_attendees is not None else None,
+            reminder_minutes=reminder_minutes,
+        )
+
+    if not attendees:
+        raise ValueError("创建会议时必须提供至少一个 attendee_queries 参会人。")
+    if not str(subject or "").strip():
+        raise ValueError("创建会议时必须提供非空 subject。")
+    if not str(body_html or "").strip():
+        raise ValueError("创建会议时必须提供非空 body_html。")
+    if start is None or end is None:
+        raise ValueError(
+            "创建会议时必须提供确定的 start/end；如需查找时间，请先调用 find_meeting_times。"
+        )
+    return schedule_meeting(
+        attendee_queries=attendees,
+        subject=str(subject),
+        body_html=str(body_html),
+        start=start,
+        end=end,
+        location=location,
+        optional_attendees=optional,
+        include_self_in_availability=True,
+        respect_attendee_working_hours=True,
+        check_availability=check_availability,
+        send_invitations=False,
+        confirm_send=False,
+        reminder_minutes=15 if reminder_minutes is None else reminder_minutes,
+        lookback_days=lookback_days,
+    )

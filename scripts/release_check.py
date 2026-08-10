@@ -17,9 +17,9 @@ import subprocess
 import sys
 
 ROOT = Path(__file__).resolve().parents[1]
-EXPECTED_VERSION = "0.6.16"
-EXPECTED_PRODUCTION_TOOLS = 21
-EXPECTED_DEBUG_TOOLS = 27
+EXPECTED_VERSION = "0.7.0"
+EXPECTED_PRODUCTION_TOOLS = 11
+EXPECTED_DEBUG_TOOLS = 17
 EXPECTED_DT_GROUPS = (
     "atomic",
     "workflow-v03",
@@ -133,7 +133,7 @@ def static_checks() -> None:
             raise SystemExit(f"{doc} does not mention {EXPECTED_VERSION}")
         if "get_weekly_report_context" not in text or "update_weekly_report" not in text:
             raise SystemExit(f"{doc} does not document both weekly-report tools")
-        if "update_meeting" not in text or "send_meeting_invitation" not in text:
+        if "save_meeting" not in text or "send_meeting_invitation" not in text:
             raise SystemExit(f"{doc} does not document both saved-meeting tools")
 
     print(

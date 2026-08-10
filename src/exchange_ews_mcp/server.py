@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
 from mcp.server.fastmcp import FastMCP
 
@@ -393,7 +393,7 @@ def continue_action(
     resume_token: str,
     selections: dict[str, str],
 ) -> dict[str, Any]:
-    """用用户确认的 person_ref/email/message_ref 恢复被中断的语义邮件任务。"""
+    """用用户确认的人员、邮件、时间或发送选择恢复被中断的任务。"""
     return service.continue_action(resume_token=resume_token, selections=selections)
 
 
@@ -491,17 +491,15 @@ def update_meeting(
 
 
 def send_meeting_invitation(
-    item_id: str | None = None,
-    calendar_ref: str | None = None,
+    calendar_ref: str,
     confirm_send: bool = False,
 ) -> dict[str, Any]:
     """发送一个已保存但尚未发送的会议邀请。
 
-    item_id/calendar_ref 必须且只能提供一个。只有显式设置 confirm_send=true 才会发送；
-    已发送或已取消的会议会被拒绝，避免重复邀请。
+    只有显式设置 confirm_send=true 才会发送；已发送或已取消的会议会被拒绝，
+    避免重复邀请。必须使用 save_meeting/read_calendar 返回的 calendar_ref。
     """
     return service.send_meeting_invitation(
-        item_id=item_id,
         calendar_ref=calendar_ref,
         confirm_send=confirm_send,
     )
@@ -596,6 +594,165 @@ def schedule_meeting(
     )
 
 
+def search_mail(
+    folders: list[str] | None = None,
+    sender_query: str | None = None,
+    participant_query: str | None = None,
+    subject_contains: str | None = None,
+    unread_only: bool | None = None,
+    has_attachments: bool | None = None,
+    after: str | None = None,
+    before: str | None = None,
+    limit: int = 20,
+    offset: int = 0,
+    lookback_days: int = 365,
+) -> dict[str, Any]:
+    """统一查找邮件并返回稳定的 message_ref。
+
+    无过滤条件时列出 inbox/sentitems 中最近邮件；姓名拼音或完整邮箱由 Server
+    解析和消歧。需要用户选择时返回 resume_token，由 continue_action 恢复。
+    """
+    return service.search_mail(
+        folders=folders,
+        sender_query=sender_query,
+        participant_query=participant_query,
+        subject_contains=subject_contains,
+        unread_only=unread_only,
+        has_attachments=has_attachments,
+        after=after,
+        before=before,
+        limit=limit,
+        offset=offset,
+        lookback_days=lookback_days,
+    )
+
+
+def read_mail(
+    message_ref: str | None = None,
+    draft_ref: str | None = None,
+    max_body_chars: int = 50000,
+) -> dict[str, Any]:
+    """读取邮件或草稿的正文、收发件人和附件元数据。
+
+    message_ref 与 draft_ref 必须且只能提供一个；不接受底层 Exchange ItemId。
+    """
+    return service.read_mail(
+        message_ref=message_ref,
+        draft_ref=draft_ref,
+        max_body_chars=max_body_chars,
+    )
+
+
+def save_mail_draft(
+    mode: Literal["compose", "reply", "reply_all", "forward"],
+    body_html: str,
+    source_message_ref: str | None = None,
+    to_queries: list[str] | None = None,
+    cc_queries: list[str] | None = None,
+    bcc_queries: list[str] | None = None,
+    subject: str | None = None,
+    attachments: list[str] | None = None,
+    lookback_days: int = 365,
+) -> dict[str, Any]:
+    """新建、回复、Reply All 或转发邮件草稿，绝不发送。
+
+    compose 需要 subject/to_queries；其他模式需要 source_message_ref。reply 和
+    reply_all 不接受收件人；forward 需要 to_queries。reply/forward 创建后如需
+    改主题或加附件，继续调用 edit_mail_draft。
+    """
+    return service.save_mail_draft(
+        mode=mode,
+        body_html=body_html,
+        source_message_ref=source_message_ref,
+        to_queries=to_queries,
+        cc_queries=cc_queries,
+        bcc_queries=bcc_queries,
+        subject=subject,
+        attachments=attachments,
+        lookback_days=lookback_days,
+    )
+
+
+def edit_mail_draft(
+    draft_ref: str,
+    subject: str | None = None,
+    body_html: str | None = None,
+    to: list[str] | None = None,
+    cc: list[str] | None = None,
+    bcc: list[str] | None = None,
+    importance: str | None = None,
+    attachments: list[str] | None = None,
+) -> dict[str, Any]:
+    """修改邮件草稿并可追加允许目录中的本地附件，绝不发送。
+
+    所有附件会在第一次 Exchange 写入前完成路径和大小校验。draft_ref 只能是
+    邮件草稿引用；会议必须使用 save_meeting。
+    """
+    return service.edit_mail_draft(
+        draft_ref=draft_ref,
+        subject=subject,
+        body_html=body_html,
+        to=to,
+        cc=cc,
+        bcc=bcc,
+        importance=importance,
+        attachments=attachments,
+    )
+
+
+def read_calendar(
+    start: str | None = None,
+    end: str | None = None,
+    calendar_ref: str | None = None,
+    limit: int = 100,
+) -> dict[str, Any]:
+    """按时间范围列出日程，或按 calendar_ref 读取一个日历项目。
+
+    读取单项时只提供 calendar_ref；列出日程时同时提供 start/end。
+    """
+    return service.read_calendar(
+        start=start,
+        end=end,
+        calendar_ref=calendar_ref,
+        limit=limit,
+    )
+
+
+def save_meeting(
+    calendar_ref: str | None = None,
+    attendee_queries: list[str] | None = None,
+    subject: str | None = None,
+    body_html: str | None = None,
+    start: str | None = None,
+    end: str | None = None,
+    location: str | None = None,
+    optional_attendees: list[str] | None = None,
+    check_availability: bool = True,
+    reminder_minutes: int | None = None,
+    lookback_days: int = 365,
+) -> dict[str, Any]:
+    """创建或修改会议并始终保持未发送状态。
+
+    没有 calendar_ref 时创建：需要 attendee_queries、subject、body_html，以及
+    确定的 start/end；如需查找候选时间，先调用 find_meeting_times。提供
+    calendar_ref 时更新现有未发送会议；attendee_queries 此时只接受完整邮箱。
+    发送邀请必须另行调用 send_meeting_invitation。
+    """
+    return service.save_meeting(
+        calendar_ref=calendar_ref,
+        attendee_queries=attendee_queries,
+        subject=subject,
+        body_html=body_html,
+        start=start,
+        end=end,
+        location=location,
+        optional_attendees=optional_attendees,
+        check_availability=check_availability,
+        reminder_minutes=reminder_minutes,
+        lookback_days=lookback_days,
+    )
+
+
 
 
 def create_mcp(*, include_debug_tools: bool = False) -> FastMCP:
@@ -612,12 +769,12 @@ debug_mcp = create_mcp(include_debug_tools=True)
 
 
 def main() -> None:
-    """Start the production MCP server with the curated 21-tool surface."""
+    """Start the production MCP server with the compact 11-tool surface."""
     mcp.run(transport="stdio")
 
 
 def debug_main() -> None:
-    """Start the full 27-tool MCP server for development and troubleshooting."""
+    """Start the 17-tool server for development and troubleshooting."""
     debug_mcp.run(transport="stdio")
 
 

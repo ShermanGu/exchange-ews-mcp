@@ -1134,11 +1134,11 @@ def build_parser() -> argparse.ArgumentParser:
     p.set_defaults(func=tool_list)
 
     p = sub.add_parser("mcp-config", help="输出可粘贴到 MCP 客户端的 stdio 配置")
-    p.add_argument("--debug-tools", action="store_true", help="输出完整 27 工具的调试 server 配置")
+    p.add_argument("--debug-tools", action="store_true", help="输出包含 17 个工具的调试 server 配置")
     p.set_defaults(func=mcp_config)
 
     p = sub.add_parser("serve", help="启动 stdio MCP server")
-    p.add_argument("--debug-tools", action="store_true", help="暴露完整 27 个底层与高层工具")
+    p.add_argument("--debug-tools", action="store_true", help="暴露 11 个生产工具和 6 个调试原语")
     p.set_defaults(func=serve)
 
     p = sub.add_parser("reset-local", help="删除本地配置、DT 配置、状态库和已保存密码")

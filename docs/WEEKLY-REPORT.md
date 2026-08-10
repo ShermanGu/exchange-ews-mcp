@@ -1,4 +1,4 @@
-# Weekly-report workflow — v0.6.16
+# Weekly-report workflow — v0.7.0
 
 ## Objective
 
@@ -221,7 +221,7 @@ Not supported by this release. The workflow rejects plain-text bodies because th
 
 ## Structural limitations
 
-v0.6.16 edits existing text slots only. It does not:
+v0.7.0 edits existing text slots only. It does not:
 
 - add or remove table rows;
 - add or remove list items as HTML nodes;

@@ -225,7 +225,7 @@ def test_saved_meeting_result_declares_follow_up_tools(tmp_path: Path) -> None:
     )
     item = result["calendar_item"]
     assert item["reference_kind"] == "calendar"
-    assert item["update_tool"] == "update_meeting"
+    assert item["update_tool"] == "save_meeting"
     assert item["send_tool"] == "send_meeting_invitation"
     stored = wf.store.get_reference(item["calendar_ref"], expected_kind="calendar")
     assert stored.payload["item_kind"] == "meeting"

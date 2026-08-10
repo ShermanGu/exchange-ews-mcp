@@ -7,11 +7,12 @@ from exchange_ews_mcp import cli
 def test_tool_list_production_output(capsys) -> None:
     assert cli.tool_list(argparse.Namespace(profile="production")) == 0
     payload = json.loads(capsys.readouterr().out)
-    assert payload["visible_tool_count"] == 21
-    assert len(payload["production_tools"]) == 21
+    assert payload["visible_tool_count"] == 11
+    assert len(payload["production_tools"]) == 11
     assert len(payload["debug_only_tools"]) == 6
     assert "create_meeting" not in payload["visible_tools"]
-    assert "schedule_meeting" in payload["visible_tools"]
+    assert "save_meeting" in payload["visible_tools"]
+    assert "schedule_meeting" not in payload["visible_tools"]
 
 
 def test_mcp_config_defaults_to_production(capsys) -> None:

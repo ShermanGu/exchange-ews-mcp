@@ -91,6 +91,8 @@ def test_compose_attachment_chain_uses_latest_changekey(tmp_path: Path) -> None:
     )
     assert [call["change_key"] for call in client.attached] == ["CK1", "CK2"]
     assert result["draft"]["change_key"] == "CK3"
+    assert result["draft"]["reference_kind"] == "draft"
+    assert result["draft"]["update_tool"] == "edit_mail_draft"
     stored = store.get_reference(result["draft"]["draft_ref"], expected_kind="draft")
     assert stored.payload["change_key"] == "CK3"
 
@@ -266,6 +268,8 @@ def test_all_server_wrappers_delegate_to_matching_service(monkeypatch) -> None:
         "weekly_flow_token": "weeklyflow_x",
         "user_input": "更新项目进展",
         "changes": [{"slot_id": "slot_x", "new_text": "新周报"}],
+        "mode": "compose",
+        "calendar_ref": "cal_x",
     }
     for name in tool_names(include_debug_tools=True):
         received = {}

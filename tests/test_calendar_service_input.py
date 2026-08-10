@@ -220,6 +220,6 @@ def test_update_email_draft_routes_calendar_reference_without_mutation(monkeypat
         body_html="<p>do not apply through mail tool</p>",
     )
     assert result["status"] == "wrong_reference_type"
-    assert result["recommended_tool"] == "update_meeting"
+    assert result["recommended_tool"] == "save_meeting"
     assert result["calendar_ref"] == calendar_ref
     assert client.calls == []

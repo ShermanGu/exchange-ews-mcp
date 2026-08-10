@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.7.0
+
+- Replaced the overlapping 21-tool Production surface with an 11-tool semantic facade: `search_mail`, `read_mail`, `save_mail_draft`, `edit_mail_draft`, `continue_action`, the two existing weekly-report tools, `read_calendar`, `find_meeting_times`, `save_meeting`, and `send_meeting_invitation`.
+- Consolidated list/search/semantic mail discovery into `search_mail`, including unread, attachment, pagination, person-resolution, and resumable ambiguity behavior.
+- Consolidated compose/reply/Reply All/forward into the draft-only `save_mail_draft`; consolidated draft field updates and prevalidated attachments into `edit_mail_draft`.
+- Consolidated calendar list/item reads into `read_calendar`, raw availability into `find_meeting_times`, and unsent meeting create/update operations into `save_meeting`.
+- Kept meeting invitation sending as a separate `confirm_send=true` operation and kept the two-step weekly-report token/HTML safety contract unchanged.
+- Reduced generated Production tool-definition JSON from 20,098 to less than 11,000 characters while retaining the underlying service and CLI primitives for maintenance and deterministic tests.
+- Debug now exposes the compact Production facade plus six low-level write primitives, for 17 tools total.
+
 ## 0.6.16
 
 - Fixed `update_meeting` rejecting some valid unsent meetings when on-premises Exchange reports `IsMeeting=false` despite retained attendees. Meeting classification now uses attendee collections and MCP reference provenance as corroborating evidence.
