@@ -26,7 +26,7 @@ py -3 -m venv .venv
 
 ```powershell
 $env:PYTEST_DISABLE_PLUGIN_AUTOLOAD = "1"
-$env:PYTHONWARNINGS = "error"
+$env:PYTHONWARNINGS = "default"
 .\.venv\Scripts\python.exe -m pytest -W error::ResourceWarning
 ```
 

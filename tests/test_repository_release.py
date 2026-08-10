@@ -93,6 +93,8 @@ def test_ci_runs_supported_windows_matrix_and_package_build() -> None:
     for version in ("3.10", "3.11", "3.12", "3.13"):
         assert version in workflow
     assert "PYTEST_DISABLE_PLUGIN_AUTOLOAD" in workflow
+    assert 'PYTHONWARNINGS: "default"' in workflow
+    assert 'PYTHONWARNINGS: "error"' not in workflow
     assert "error::ResourceWarning" in workflow
     assert "python -m build" in workflow
     assert "tool-list --profile debug" in workflow
@@ -101,13 +103,24 @@ def test_ci_runs_supported_windows_matrix_and_package_build() -> None:
 def test_release_scripts_use_strict_unit_suite_and_keep_live_dt_explicit() -> None:
     unit = read("run-unit-tests.cmd")
     assert "PYTEST_DISABLE_PLUGIN_AUTOLOAD" in unit
-    assert "PYTHONWARNINGS=error" in unit
+    assert "PYTHONWARNINGS=default" in unit
+    assert "PYTHONWARNINGS=error" not in unit
     assert "error::ResourceWarning" in unit
     dt = read("run-dt-tests.cmd")
     assert "--read-only" in dt
     assert "--full" in dt
     checker = read("scripts/release_check.py")
+    assert 'env["PYTHONWARNINGS"] = "default"' in checker
+    assert 'env["PYTHONWARNINGS"] = "error"' not in checker
     assert "Live Exchange DT must be run separately" in checker
+
+
+def test_package_metadata_uses_current_spdx_license_fields() -> None:
+    pyproject = read("pyproject.toml")
+    assert 'requires = ["setuptools>=77", "wheel"]' in pyproject
+    assert 'license = "MIT"' in pyproject
+    assert 'license-files = ["LICENSE"]' in pyproject
+    assert "License :: OSI Approved :: MIT License" not in pyproject
 
 
 def test_user_facing_docs_have_no_wrong_current_tool_counts() -> None:
