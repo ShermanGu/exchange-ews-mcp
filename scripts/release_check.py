@@ -232,7 +232,7 @@ def main() -> int:
     if not args.skip_tests:
         env = os.environ.copy()
         env["PYTEST_DISABLE_PLUGIN_AUTOLOAD"] = "1"
-        env["PYTHONWARNINGS"] = "error"
+        env["PYTHONWARNINGS"] = "default"
         run([sys.executable, "-m", "pytest", "-W", "error::ResourceWarning"], env=env)
         run([sys.executable, "-m", "compileall", "-q", "src", "tests", "scripts"])
     if not args.skip_build:

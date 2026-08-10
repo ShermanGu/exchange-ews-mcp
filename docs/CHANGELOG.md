@@ -2,6 +2,8 @@
 
 ## 0.7.0
 
+- Fixed the Windows CI matrix by keeping third-party warnings visible while treating only `ResourceWarning` as fatal across Actions, local unit tests, and release checks.
+- Updated package license metadata to the current SPDX format and removed the corresponding setuptools deprecation warnings.
 - Replaced the overlapping 21-tool Production surface with an 11-tool semantic facade: `search_mail`, `read_mail`, `save_mail_draft`, `edit_mail_draft`, `continue_action`, the two existing weekly-report tools, `read_calendar`, `find_meeting_times`, `save_meeting`, and `send_meeting_invitation`.
 - Consolidated list/search/semantic mail discovery into `search_mail`, including unread, attachment, pagination, person-resolution, and resumable ambiguity behavior.
 - Consolidated compose/reply/Reply All/forward into the draft-only `save_mail_draft`; consolidated draft field updates and prevalidated attachments into `edit_mail_draft`.

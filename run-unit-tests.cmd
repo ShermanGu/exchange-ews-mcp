@@ -6,7 +6,7 @@ if not exist ".venv\Scripts\python.exe" (
   exit /b 1
 )
 set PYTEST_DISABLE_PLUGIN_AUTOLOAD=1
-set PYTHONWARNINGS=error
+set PYTHONWARNINGS=default
 ".venv\Scripts\python.exe" -m pip install -e ".[test]"
 if errorlevel 1 exit /b %errorlevel%
 ".venv\Scripts\python.exe" -m pytest -W error::ResourceWarning

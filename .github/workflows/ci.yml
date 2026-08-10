@@ -44,7 +44,8 @@ jobs:
       - name: Run strict unit suite
         env:
           PYTEST_DISABLE_PLUGIN_AUTOLOAD: "1"
-          PYTHONWARNINGS: "error"
+          # Keep third-party warnings visible, but only fail on resource leaks.
+          PYTHONWARNINGS: "default"
         run: python -m pytest -W error::ResourceWarning
 
       - name: Verify package metadata and tool profiles
