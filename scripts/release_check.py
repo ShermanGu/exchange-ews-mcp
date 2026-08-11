@@ -250,7 +250,12 @@ def write_sha256_manifest(output_dir: Path) -> Path:
         lines.append(f"{digest}  {artifact.name}")
     manifest = output_dir / "SHA256SUMS.txt"
     manifest.write_text("\n".join(lines) + "\n", encoding="utf-8")
-    print(f"Wrote checksum manifest: {manifest.relative_to(ROOT)}")
+    resolved_manifest = manifest.resolve()
+    try:
+        display_path = resolved_manifest.relative_to(ROOT)
+    except ValueError:
+        display_path = resolved_manifest
+    print(f"Wrote checksum manifest: {display_path}")
     return manifest
 
 

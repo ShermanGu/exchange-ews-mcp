@@ -201,3 +201,27 @@ def test_release_check_generates_checksum_manifest() -> None:
     assert "write_sha256_manifest" in checker
     assert "SHA256SUMS.txt" in checker
     assert "dist/SHA256SUMS.txt" in checklist
+
+
+def test_checksum_manifest_accepts_relative_output_dir(
+    monkeypatch, tmp_path: Path, capsys
+) -> None:
+    import importlib.util
+
+    script_path = ROOT / "scripts" / "release_check.py"
+    spec = importlib.util.spec_from_file_location("release_check_checksum_test", script_path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    monkeypatch.chdir(tmp_path)
+    output_dir = Path("dist")
+    output_dir.mkdir()
+    (output_dir / "package.whl").write_bytes(b"wheel")
+
+    manifest = module.write_sha256_manifest(output_dir)
+
+    assert manifest == Path("dist") / "SHA256SUMS.txt"
+    assert manifest.is_file()
+    assert manifest.read_text(encoding="utf-8").endswith("  package.whl\n")
+    assert "Wrote checksum manifest:" in capsys.readouterr().out
