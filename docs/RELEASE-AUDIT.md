@@ -77,7 +77,7 @@ python -m pytest -W error::ResourceWarning
 Expected result for this source tree:
 
 ```text
-227 passed
+228 passed
 ```
 
 Additional release checks:
@@ -107,10 +107,10 @@ The final release distributions were rebuilt from the exact v0.8.3 package sourc
 
 ```text
 exchange_ews_mcp-0.8.3-py3-none-any.whl
-SHA-256: 5c9107161e5850be3ea499caec48ae6740385f344ea14eab34acd46007d0154b
+SHA-256: 7473e4822aa2dc43651e871a582f857287da4237560a05aca03fbbf92e26bd32
 
 exchange_ews_mcp-0.8.3.tar.gz
-SHA-256: 30c1a7ae423900882a07e9b51590634ea510504f3e38ab87a4370db7b47987a2
+SHA-256: 50baf2ad08ae23875509f65617f8c067c4f3064fe924b4cc3183befdf1851aac
 ```
 
 Wheel metadata validation:
