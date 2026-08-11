@@ -1,5 +1,7 @@
 from xml.etree import ElementTree as ET
 
+import pytest
+
 from exchange_ews_mcp.xml_builder import (
     MESSAGES_NS, TYPES_NS, build_create_meeting_request,
     build_find_calendar_items_request, build_get_user_availability_request,
@@ -120,15 +122,13 @@ def test_send_existing_meeting_uses_send_to_all_and_save_copy() -> None:
     assert update.attrib["SendMeetingInvitationsOrCancellations"] == "SendToAllAndSaveCopy"
 
 
-def test_availability_request_supports_room_mailbox() -> None:
-    xml = build_get_user_availability_request(
-        exchange_version="Exchange2010_SP2",
-        attendees=[{"email": "room101@example.com", "attendee_type": "Room"}],
-        start="2026-08-03T00:00:00",
-        end="2026-08-04T00:00:00",
-        interval_minutes=30,
-    )
-    root = ET.fromstring(xml)
-    attendee_type = root.find(f".//{q(TYPES_NS, 'AttendeeType')}")
-    assert attendee_type is not None
-    assert attendee_type.text == "Room"
+@pytest.mark.parametrize("attendee_type", ["Room", "Resource"])
+def test_availability_request_rejects_room_and_resource(attendee_type: str) -> None:
+    with pytest.raises(ValueError, match="会议室/资源邮箱忙闲查询未启用"):
+        build_get_user_availability_request(
+            exchange_version="Exchange2010_SP2",
+            attendees=[{"email": "space@example.com", "attendee_type": attendee_type}],
+            start="2026-08-03T00:00:00",
+            end="2026-08-04T00:00:00",
+            interval_minutes=30,
+        )

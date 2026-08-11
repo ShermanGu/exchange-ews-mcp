@@ -1,4 +1,4 @@
-# Exchange EWS MCP v0.7.0
+# Exchange EWS MCP v0.8.3
 
 [English](README.md) | **简体中文**
 
@@ -150,7 +150,7 @@ Arguments / 参数：
 .\.venv\Scripts\exchange-ews-mcp.exe tool-list
 ```
 
-预期版本：`0.7.0` · Production 工具数量：`11`
+预期版本：`0.8.3` · Production 工具数量：`11`
 
 🎉 到这里就完成了，可以直接让 Agent 开始干活。
 
@@ -174,26 +174,26 @@ Arguments / 参数：
 | --- | --- |
 | 邮件 | 搜索/读取邮件、新建草稿、回复、转发、修改草稿、添加附件 |
 | 人员 | 收件人解析、重名候选处理 |
-| 周报 | 读取历史周报，在保留原格式的情况下创建新的 Reply All 草稿 |
+| 周报 | 读取历史周报，自动选择 Reply All 或新建草稿，并保留原格式 |
 | 日历 | 查询忙闲、找共同时间、读取日程、创建/修改会议、发送邀请 |
 
-精简邮件门面使用 `search_mail`、`read_mail`、`save_mail_draft` 和 `edit_mail_draft`；周报仍强制使用 `get_weekly_report_context` → `update_weekly_report`；会议创建和修改统一使用 `save_meeting`，确认发送使用 `send_meeting_invitation`。
+精简邮件门面使用 `search_mail`、`read_mail`、`resolve_people`、`save_mail_draft` 和 `edit_mail_draft`；周报只暴露 `weekly_report` 一个入口，第二步统一通过 `continue_action`；会议创建和修改统一使用 `save_meeting`，确认发送使用 `send_meeting_invitation`。
 
 ## 📝 周报流程
 
 ```text
 找到上一封周报
       ↓
-读取最近几周内容
+读取三周上下文（当前周 + 前两周）
       ↓
 Agent 判断哪些地方发生变化
       ↓
 只更新相关文字
       ↓
-创建新的 Reply All 草稿
+自动创建未发送的 Reply All 或新建草稿
 ```
 
-Agent **不会重新生成整份 HTML**。原来的表格和格式由 Server 保留，只替换需要更新的文字。
+Agent **不会重新生成整份 HTML**。原来的表格和格式由 Server 保留，只替换需要更新的文字。Agent 使用 `s1` 这类短局部槽位 ID；Server 会自动把可识别的 Subject 日期/周次顺延到下一周。
 
 ## 🔒 安全设计，简单说
 

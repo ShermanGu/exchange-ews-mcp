@@ -51,6 +51,8 @@ class FakeClient:
                 "body_type": "HTML",
                 "body_truncated": False,
                 "is_draft": False,
+                "to": [{"email": "self@example.com"}],
+                "cc": [{"email": "manager@example.com"}],
                 "attachments": [],
             }
         draft = self.drafts[item_id].copy()
@@ -450,19 +452,13 @@ def test_calendar_v05_dt_never_sends_and_cleans_up(tmp_path) -> None:
 from exchange_ews_mcp.dt_runner import run_weekly_report_v06_integration_tests
 
 
-WEEKLY_DT_SEPARATOR = (
-    "<p class=MsoNormal><span lang=EN-US style='font-family:等线'>"
-    "<o:p>&nbsp;</o:p></span></p>"
-)
 WEEKLY_DT_BODY = (
     "<html><body><div class=WordSection1>"
     "<table><tr><td>日期：2026-07-27 至 2026-08-02</td></tr>"
     "<tr><td>完成旧任务</td></tr></table>"
-    + WEEKLY_DT_SEPARATOR
-    + "<div>WK2</div>"
-    + WEEKLY_DT_SEPARATOR
-    + "<div>WK1</div>"
-    + "</div></body></html>"
+    "<div class='quoted-history'><p><span>From: previous@example.com</span></p>"
+    "<div>WK2 quoted history</div></div>"
+    "</div></body></html>"
 )
 
 
@@ -564,7 +560,7 @@ def test_weekly_report_v06_dt_read_only_validates_context(tmp_path) -> None:
     )
     assert report["summary"]["status"] == "PASS"
     assert [step["name"] for step in report["steps"]] == [
-        "weekly_report_context", "weekly_report_reply_all_draft"
+        "weekly_report_context", "weekly_report_continue_action_draft"
     ]
     assert report["steps"][1]["status"] == "SKIP"
     assert client.reply_calls == []
@@ -588,6 +584,7 @@ def test_weekly_report_v06_dt_creates_unsent_reply_all_draft(tmp_path) -> None:
     assert report["summary"]["status"] == "PASS"
     assert len(report["created_drafts"]) == 1
     assert report["created_drafts"][0]["draft_type"] == "weekly_report_reply_all"
+    assert report["created_drafts"][0]["draft_mode"] == "reply_all"
     assert client.reply_calls[0]["reply_all"] is True
     assert client.update_calls[0]["subject"] == "项目周报"
 

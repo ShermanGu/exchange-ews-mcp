@@ -1,16 +1,54 @@
 # Changelog
 
+## 0.8.3
+
+- Release metadata/docs synchronized to v0.8.3; CI artifact naming and generated distribution checksum manifest are included in the release gate.
+
+- Weekly Report Subject rollover is now server-owned: supported calendar dates and `第N周`/`WKN`/`WN` markers are deterministically advanced by one week during `weekly_report`.
+- `weekly_report.subject` now represents the default Subject that will be used for the new draft, not merely the previous source Subject.
+- `continue_action.selections.subject` is no longer conditionally required for normal weekly updates; omit it to use the server-selected Subject, and supply it only as an explicit user override.
+- Reply All preserves Exchange's native reply Subject when no period marker changed; automatic Subject UpdateItem occurs only for a real rollover or explicit override.
+- Year-month-only strings such as `2026-08` are no longer treated as weekly-period markers, avoiding false runtime requirements.
+
+## 0.8.2
+
+- Weekly Report Agent contract compressed to `resume_token/mode/subject/request/slots/history`; dynamic `agent_prompt` and duplicated internal metadata are no longer returned.
+- Agent-facing weekly slot IDs are now context-local short IDs (`s1`, `s2`, ...). Long deterministic slot IDs, offsets, HTML paths and hashes remain server-side; `continue_action` translates short IDs back to the hidden manifest before text-only replacement.
+- Weekly `changes[]` now uses compact `{"id":"s1","text":"..."}` entries. Invalid local IDs remain retryable with the same unconsumed token.
+- Weekly history is fixed to three weeks total: the newest week is represented by editable `slots`, and only the previous two weeks are returned in `history`. The Agent-facing `weekly_report` tool no longer exposes `max_reports`.
+- Empty slot locations are omitted instead of returning `null`; `loc` remains advisory and never participates in deterministic write positioning.
+
+## 0.8.1
+
+- 修复 Weekly Report continuation 的 token 消耗时机：`slot_id`、`subject`、`changes` 等确定性 Agent 参数校验现在发生在 `context_ready -> applying` 原子抢占之前。
+- Agent 提交错误或旧的 `slot_id` 时，不再把有效 `resume_token` 标记为 `failed`；修正 selections 后可直接使用同一个 token 重试 `continue_action`。
+- 保留 token 的严格上下文绑定、30 分钟 TTL、同源上下文 supersede、并发原子抢占、source/body stale 检查和成功写入的一次性语义。
+- 改进周报 Agent Prompt 与错误提示，明确只有 `context_stale`、过期、已使用或被新上下文取代时才重新调用 `weekly_report`。
+
+## 0.8.0
+
+- 周报 Agent 工具面收敛为单一 `weekly_report` 入口；第二步统一通过 `continue_action`，内部 `update_weekly_report` 不再注册给 Agent。
+- 删除 Outlook separator 白名单依赖；改为扫描可见文本中的首个 `发件人` / 独立英文 `From`，并回退到扫描根下 depth-0 HTML 块后截断 quoted history。
+- 周报历史改为搜索最近最多五封匹配邮件，并从每封邮件各提取顶部当前正文；兼容 Reply All 长线程和每周新建邮件两种习惯。
+- Server 自动选择周报草稿模式：发现 quoted-history sender header 时 Reply All，否则 Compose；Compose 复制源周报 To/CC。
+- Subject 含明显日期/周次时，`continue_action` 必须提交更新后的 Subject，避免旧周期静默继承。
+- 保留 Server-owned HTML、slot manifest/offset、结构签名、location-only-as-hint、一次性 token 与 stale-source 防护。
+
 ## 0.7.0
 
+- Stabilized compact routing before the next weekly-report refactor: `continue_action` now uses explicit mail/calendar action allow-lists and rejects unknown action types instead of guessing a workflow.
+- Mail search/list results now emit exactly one typed reference: drafts receive only `draft_ref`, normal messages receive `message_ref`; drafts can no longer accidentally become reply/forward sources.
+- Draft editing validates reference kind before attachment path preflight, including attachment-only calls, so `calendar_ref` is routed safely without any file or Exchange side effects.
+- Removed Room/Resource availability support from public/runtime validation because room/resource mailbox lookup is not supported in the target deployment; person availability remains Organizer/Required/Optional only.
 - Fixed the Windows CI matrix by keeping third-party warnings visible while treating only `ResourceWarning` as fatal across Actions, local unit tests, and release checks.
 - Updated package license metadata to the current SPDX format and removed the corresponding setuptools deprecation warnings.
-- Replaced the overlapping 21-tool Production surface with an 11-tool semantic facade: `search_mail`, `read_mail`, `save_mail_draft`, `edit_mail_draft`, `continue_action`, the two existing weekly-report tools, `read_calendar`, `find_meeting_times`, `save_meeting`, and `send_meeting_invitation`.
+- Replaced the overlapping 21-tool Production surface with a compact semantic facade. The stabilized surface contains 12 tools: `search_mail`, `read_mail`, independent `resolve_people`, `save_mail_draft`, `edit_mail_draft`, `continue_action`, the two weekly-report tools, `read_calendar`, `find_meeting_times`, `save_meeting`, and `send_meeting_invitation`.
 - Consolidated list/search/semantic mail discovery into `search_mail`, including unread, attachment, pagination, person-resolution, and resumable ambiguity behavior.
 - Consolidated compose/reply/Reply All/forward into the draft-only `save_mail_draft`; consolidated draft field updates and prevalidated attachments into `edit_mail_draft`.
 - Consolidated calendar list/item reads into `read_calendar`, raw availability into `find_meeting_times`, and unsent meeting create/update operations into `save_meeting`.
 - Kept meeting invitation sending as a separate `confirm_send=true` operation and kept the two-step weekly-report token/HTML safety contract unchanged.
-- Reduced generated Production tool-definition JSON from 20,098 to less than 11,000 characters while retaining the underlying service and CLI primitives for maintenance and deterministic tests.
-- Debug now exposes the compact Production facade plus six low-level write primitives, for 17 tools total.
+- Kept the Production tool-definition surface compact while restoring independent semantic people resolution; low-level `resolve_names` remains debug-only.
+- Debug now exposes the compact Production facade plus six low-level write primitives, for 18 tools total.
 
 ## 0.6.16
 

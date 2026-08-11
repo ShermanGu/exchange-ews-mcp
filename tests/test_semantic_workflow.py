@@ -325,3 +325,96 @@ def test_complete_email_is_exact_search_mode(tmp_path: Path) -> None:
     assert result["default_rule_applied"] == "exact_email"
     assert result["returned"] == 1
     assert result["selected"]["email"] == "xiaoming468@company2.com"
+
+
+def test_find_email_returns_typed_draft_ref_without_message_ref(tmp_path: Path) -> None:
+    client = FakeSemanticClient()
+
+    def drafts_only(**kwargs):
+        return {
+            "folders": ["drafts"],
+            "returned": 1,
+            "items": [{
+                "item_id": "DRAFT1",
+                "change_key": "DCK1",
+                "subject": "Unsent",
+                "folder": "drafts",
+                "is_draft": True,
+            }],
+            "per_folder": [],
+        }
+
+    client.search_emails_multi_folder = drafts_only  # type: ignore[method-assign]
+    workflow = SemanticMailWorkflow(
+        client,  # type: ignore[arg-type]
+        ReferenceStore(tmp_path / "state.db"),
+        _config(),
+    )
+    result = workflow.find_email(folders=["drafts"])
+    item = result["selected_message"]
+    assert result["status"] == "resolved"
+    assert item["reference_kind"] == "draft"
+    assert item["draft_ref"].startswith("draft_")
+    assert item["update_tool"] == "edit_mail_draft"
+    assert "message_ref" not in item
+
+class DraftSearchSemanticClient(FakeSemanticClient):
+    def search_emails_multi_folder(self, *, folders=None, **kwargs):
+        requested = list(folders or ["inbox", "sentitems"])
+        if requested == ["drafts"]:
+            return {
+                "folders": requested,
+                "returned": 1,
+                "items": [
+                    {
+                        "item_id": "D-SOURCE",
+                        "change_key": "DCK-SOURCE",
+                        "subject": "draft source",
+                        "folder": "drafts",
+                        "is_draft": True,
+                    }
+                ],
+                "per_folder": [],
+            }
+        return super().search_emails_multi_folder(folders=folders, **kwargs)
+
+
+def test_reply_search_rejects_draft_as_source_without_crashing(tmp_path: Path) -> None:
+    client = DraftSearchSemanticClient()
+    workflow = SemanticMailWorkflow(
+        client,  # type: ignore[arg-type]
+        ReferenceStore(tmp_path / "state.db"),
+        _config(),
+    )
+
+    result = workflow.reply_to_email(
+        folders=["drafts"],
+        subject_contains="draft source",
+        body_html="<p>reply</p>",
+    )
+
+    assert result["status"] == "not_found"
+    resolution = result["message_resolution"]
+    assert resolution["excluded_non_message_count"] == 1
+    assert resolution["items"] == []
+    assert client.replied == []
+
+
+def test_forward_search_rejects_draft_as_source_without_crashing(tmp_path: Path) -> None:
+    client = DraftSearchSemanticClient()
+    workflow = SemanticMailWorkflow(
+        client,  # type: ignore[arg-type]
+        ReferenceStore(tmp_path / "state.db"),
+        _config(),
+    )
+
+    result = workflow.forward_email(
+        to_queries=["exact@company.com"],
+        folders=["drafts"],
+        subject_contains="draft source",
+        body_html="<p>forward</p>",
+    )
+
+    assert result["status"] == "not_found"
+    assert result["message_resolution"]["excluded_non_message_count"] == 1
+    assert client.forwarded == []

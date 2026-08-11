@@ -3,33 +3,26 @@ from __future__ import annotations
 
 import hashlib
 import html
-import json
 import re
 import unicodedata
+from datetime import date, datetime, timedelta
 from dataclasses import dataclass
 from typing import Any, Iterable, Iterator
 
 from .weekly_layout import build_layout_contexts
-from .weekly_separator_whitelist import (
-    MAX_WEEKLY_REPORT_SEPARATOR_LENGTH,
-    WEEKLY_REPORT_SEPARATOR_NAME_BY_HTML,
-)
-
-
 WEEKLY_WORD_SECTION_SCAN_LIMIT = 500_000
 _BODY_OPEN_RE = re.compile(r"<body\b[^>]*>", re.IGNORECASE)
 _BODY_CLOSE_RE = re.compile(r"</body\s*>", re.IGNORECASE)
 _CID_RE = re.compile(r"\bcid:([^\s\"'<>]+)", re.IGNORECASE)
-
-
+_FROM_HEADER_RE = re.compile(r"(?<![A-Za-z])from(?![A-Za-z])", re.IGNORECASE)
 _WORD_SECTION_OPEN_RE = re.compile(
     r"<div\b(?=[^>]*\bclass\s*=\s*(?:[\"'][^\"']*\bWordSection1\b[^\"']*[\"']|WordSection1\b))[^>]*>",
     re.IGNORECASE,
 )
 
-# Separator recognition is deliberately exact.  Candidate ``<p>...</p>``
-# blocks are compared unchanged against the standalone whitelist, and only a
-# direct child of ``div.WordSection1`` may terminate the copied report body.
+# Quoted-history recognition is format-agnostic: visible text is scanned for
+# the first sender header (Chinese ``发件人`` or standalone English ``From``),
+# then the boundary is rewound to the depth-0 block relative to the scan root.
 
 _VOID_TAGS = {
     "area", "base", "br", "col", "embed", "hr", "img", "input",
@@ -54,24 +47,191 @@ class ExtractedWeeklyBody:
     scan_limit: int | None = None
     separator_variant: str | None = None
     separator_language: str | None = None
+    history_detected: bool = False
+    history_keyword: str | None = None
+    scan_root: str | None = None
 
 
 @dataclass(frozen=True)
-class WordSectionParagraphBlock:
-    start: int
-    end: int
-    raw_html: str
+class HistoryHeaderBoundary:
+    """First quoted-history header and the depth-0 block that contains it."""
+
+    keyword: str
+    text_offset: int
+    boundary_offset: int
     depth: int
-    whitelist_name: str | None
 
-    @property
-    def is_direct_child(self) -> bool:
-        return self.depth == 0
 
-    @property
-    def accepted_separator(self) -> bool:
-        return self.is_direct_child and self.whitelist_name is not None
 
+_SUBJECT_FULL_DATE_RE = re.compile(
+    r"(?P<year>20\d{2})(?P<sep1>[-/.])(?P<month>\d{1,2})(?P<sep2>[-/.])(?P<day>\d{1,2})"
+)
+_SUBJECT_FULL_DATE_CN_RE = re.compile(
+    r"(?P<year>20\d{2})年(?P<month>\d{1,2})月(?P<day>\d{1,2})日?"
+)
+_SUBJECT_MONTH_DAY_CN_RE = re.compile(r"(?<!\d)(?P<month>\d{1,2})月(?P<day>\d{1,2})日")
+_SUBJECT_MONTH_DAY_RE = re.compile(
+    r"(?<!\d)(?P<month>\d{1,2})(?P<sep>[/.-])(?P<day>\d{1,2})(?!\d)"
+)
+_SUBJECT_WEEK_RE = re.compile(
+    r"(?:第(?P<cn_pre>\s*)(?P<cn>\d{1,2})(?P<cn_post>\s*)周|"
+    r"(?P<wk>\bWK)(?P<wk_sep>\s*[-_]?\s*)(?P<wk_num>\d{1,2})\b|"
+    r"(?P<w>\bW)(?P<w_sep>\s*[-_]?\s*)(?P<w_num>\d{1,2})\b)",
+    re.IGNORECASE,
+)
+
+
+def _parse_reference_date(value: str | None) -> date | None:
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+    try:
+        return datetime.fromisoformat(raw.replace("Z", "+00:00")).date()
+    except ValueError:
+        return None
+
+
+def _format_number(value: int, original: str) -> str:
+    return f"{value:0{len(original)}d}" if len(original) > 1 else str(value)
+
+
+def _closest_partial_date(month: int, day: int, reference: date | None) -> date | None:
+    if reference is None:
+        return None
+    candidates: list[date] = []
+    for year in (reference.year - 1, reference.year, reference.year + 1):
+        try:
+            candidates.append(date(year, month, day))
+        except ValueError:
+            continue
+    if not candidates:
+        return None
+    return min(candidates, key=lambda item: abs((item - reference).days))
+
+
+def _next_week_number(current: int, reference: date | None) -> int:
+    if reference is not None:
+        current_iso = reference.isocalendar().week
+        previous_iso = (reference - timedelta(days=7)).isocalendar().week
+        if current in {current_iso, previous_iso}:
+            return (reference + timedelta(days=7)).isocalendar().week
+    return 1 if current >= 53 else current + 1
+
+
+def roll_forward_weekly_subject(subject: str, *, reference_sent_at: str | None = None) -> str | None:
+    """Return a deterministic next-week Subject when a supported marker exists.
+
+    Supported markers are full calendar dates (``YYYY-MM-DD``, ``YYYY/MM/DD``,
+    ``YYYY.MM.DD`` and ``YYYY年M月D日``), month/day markers when the source sent
+    date can safely supply the year, and ``第N周``/``WKN``/``WN`` week markers.
+    Every supported marker is shifted by seven days or one week while preserving
+    its visible style.  ``None`` means that no marker could be safely rolled.
+    """
+    original = str(subject or "")
+    value = original
+    if not value.strip():
+        return None
+    reference = _parse_reference_date(reference_sent_at)
+    placeholders: dict[str, str] = {}
+    counter = 0
+
+    def stash(text: str) -> str:
+        nonlocal counter
+        key = f"\x00WR{counter}\x00"
+        counter += 1
+        placeholders[key] = text
+        return key
+
+    changed = False
+
+    def replace_full(match: re.Match[str]) -> str:
+        nonlocal changed
+        try:
+            current = date(int(match.group("year")), int(match.group("month")), int(match.group("day")))
+        except ValueError:
+            return match.group(0)
+        nxt = current + timedelta(days=7)
+        changed = True
+        rendered = (
+            f"{nxt.year}{match.group('sep1')}"
+            f"{_format_number(nxt.month, match.group('month'))}{match.group('sep2')}"
+            f"{_format_number(nxt.day, match.group('day'))}"
+        )
+        return stash(rendered)
+
+    value = _SUBJECT_FULL_DATE_RE.sub(replace_full, value)
+
+    def replace_full_cn(match: re.Match[str]) -> str:
+        nonlocal changed
+        try:
+            current = date(int(match.group("year")), int(match.group("month")), int(match.group("day")))
+        except ValueError:
+            return match.group(0)
+        nxt = current + timedelta(days=7)
+        changed = True
+        rendered = f"{nxt.year}年{_format_number(nxt.month, match.group('month'))}月{_format_number(nxt.day, match.group('day'))}日"
+        return stash(rendered)
+
+    value = _SUBJECT_FULL_DATE_CN_RE.sub(replace_full_cn, value)
+
+    def replace_partial_cn(match: re.Match[str]) -> str:
+        nonlocal changed
+        current = _closest_partial_date(int(match.group("month")), int(match.group("day")), reference)
+        if current is None:
+            return match.group(0)
+        nxt = current + timedelta(days=7)
+        changed = True
+        return stash(f"{_format_number(nxt.month, match.group('month'))}月{_format_number(nxt.day, match.group('day'))}日")
+
+    value = _SUBJECT_MONTH_DAY_CN_RE.sub(replace_partial_cn, value)
+
+    def replace_partial(match: re.Match[str]) -> str:
+        nonlocal changed
+        current = _closest_partial_date(int(match.group("month")), int(match.group("day")), reference)
+        if current is None:
+            return match.group(0)
+        nxt = current + timedelta(days=7)
+        changed = True
+        return stash(
+            f"{_format_number(nxt.month, match.group('month'))}{match.group('sep')}"
+            f"{_format_number(nxt.day, match.group('day'))}"
+        )
+
+    value = _SUBJECT_MONTH_DAY_RE.sub(replace_partial, value)
+
+    def replace_week(match: re.Match[str]) -> str:
+        nonlocal changed
+        raw_num = match.group("cn") or match.group("wk_num") or match.group("w_num")
+        if raw_num is None:
+            return match.group(0)
+        number = int(raw_num)
+        if not 1 <= number <= 53:
+            return match.group(0)
+        nxt = _next_week_number(number, reference)
+        changed = True
+        num_text = _format_number(nxt, raw_num)
+        if match.group("cn") is not None:
+            return stash(f"第{match.group('cn_pre')}{num_text}{match.group('cn_post')}周")
+        if match.group("wk") is not None:
+            return stash(f"{match.group('wk')}{match.group('wk_sep')}{num_text}")
+        return stash(f"{match.group('w')}{match.group('w_sep')}{num_text}")
+
+    value = _SUBJECT_WEEK_RE.sub(replace_week, value)
+    for key, rendered in placeholders.items():
+        value = value.replace(key, rendered)
+    return value if changed and value != original else None
+
+
+def subject_has_weekly_period_marker(subject: str) -> bool:
+    """Return whether the Subject contains a safely rollable weekly marker."""
+    value = unicodedata.normalize("NFKC", str(subject or ""))
+    return bool(
+        _SUBJECT_FULL_DATE_RE.search(value)
+        or _SUBJECT_FULL_DATE_CN_RE.search(value)
+        or _SUBJECT_MONTH_DAY_CN_RE.search(value)
+        or _SUBJECT_MONTH_DAY_RE.search(value)
+        or _SUBJECT_WEEK_RE.search(value)
+    )
 
 def _body_inner(value: str) -> str:
     """Return body-inner HTML by slicing the original string without reserialization."""
@@ -116,49 +276,104 @@ def _visible_text_for_validation(value: str) -> str:
     return re.sub(r"\s+", " ", normalized).strip()
 
 
-def _iter_word_section_paragraph_blocks(
+def _scan_root_bounds(value: str) -> tuple[int, int, str, int | None]:
+    """Return the HTML range whose nesting depth defines the weekly body root.
+
+    Outlook desktop usually wraps the message in ``div.WordSection1``.  When it
+    exists we keep the historical depth semantics relative to that div.  Other
+    clients are supported by falling back to the raw ``body`` inner HTML.
+    """
+    section = _WORD_SECTION_OPEN_RE.search(value)
+    if section is not None:
+        closing = _matching_div_close(value, section)
+        section_end = closing[0] if closing else len(value)
+        return section.end(), section_end, "word_section1", section.start()
+
+    opening = _BODY_OPEN_RE.search(value)
+    if opening is None:
+        return 0, len(value), "document", None
+    closing_matches = list(_BODY_CLOSE_RE.finditer(value, opening.end()))
+    end = closing_matches[-1].start() if closing_matches else len(value)
+    return opening.end(), end, "body", None
+
+
+def _normalized_visible_span(raw: str) -> str:
+    decoded = html.unescape(raw).replace("\xa0", " ")
+    normalized = unicodedata.normalize("NFKC", decoded)
+    return re.sub(r"[\u200b-\u200f\u202a-\u202e\ufeff]", "", normalized)
+
+
+def _history_keyword_in_text(raw: str) -> str | None:
+    text = _normalized_visible_span(raw)
+    if "发件人" in text:
+        return "发件人"
+    if _FROM_HEADER_RE.search(text):
+        return "From"
+    return None
+
+
+def _find_history_header_boundary(
     value: str,
     *,
     content_start: int,
     section_end: int,
-    scan_limit: int | None = None,
-) -> Iterator[WordSectionParagraphBlock]:
-    """Yield complete ``p`` blocks with their nesting depth inside WordSection1.
+    scan_limit: int | None = WEEKLY_WORD_SECTION_SCAN_LIMIT,
+) -> HistoryHeaderBoundary | None:
+    """Find the first visible ``发件人``/``From`` and rewind to depth zero.
 
-    ``depth == 0`` means the paragraph is a direct child of WordSection1.  A
-    paragraph inside a table, cell, nested div, or any other container has a
-    greater depth and can never be accepted as a weekly-report separator.
-
-    Raw candidate HTML is sliced directly from ``value``.  It is not decoded,
-    normalized, reformatted, or reserialized before whitelist comparison.
+    Only visible text is searched, so CSS classes, URLs, script/style content,
+    attributes and comments cannot accidentally trigger the boundary.  The
+    returned boundary is the opening offset of the outermost HTML block that is
+    open at the keyword.  This is exactly the depth-0 child relative to the
+    selected scan root (WordSection1 when present, otherwise body/document).
     """
     if content_start < 0 or section_end < content_start:
-        raise ValueError("WordSection1 扫描范围无效。")
+        raise ValueError("周报 HTML 扫描范围无效。")
     if scan_limit is not None and scan_limit <= 0:
         raise ValueError("scan_limit 必须大于 0。")
 
     scan_end = section_end
     if scan_limit is not None:
-        scan_end = min(
-            section_end,
-            content_start + scan_limit + MAX_WEEKLY_REPORT_SEPARATOR_LENGTH,
+        scan_end = min(section_end, content_start + scan_limit)
+
+    # Entries are (tag_name, opening_offset).  The first entry is the depth-0
+    # block relative to content_start.
+    stack: list[tuple[str, int]] = []
+    cursor = content_start
+
+    def inspect_text(start: int, end: int) -> HistoryHeaderBoundary | None:
+        if end <= start:
+            return None
+        if any(name in {"script", "style"} for name, _ in stack):
+            return None
+        raw = value[start:end]
+        keyword = _history_keyword_in_text(raw)
+        if keyword is None:
+            return None
+        boundary = stack[0][1] if stack else start
+        return HistoryHeaderBoundary(
+            keyword=keyword,
+            text_offset=start,
+            boundary_offset=boundary,
+            depth=len(stack),
         )
 
-    # Stack entries are (tag_name, opening_offset, depth_before_opening).
-    stack: list[tuple[str, int, int]] = []
     for match in _TAG_RE.finditer(value, content_start, scan_end):
+        boundary = inspect_text(cursor, match.start())
+        if boundary is not None:
+            return boundary
+
         raw = match.group(0)
+        cursor = match.end()
         if raw.startswith(("<!--", "<!", "<?")):
             continue
         closing = bool(match.group(1))
         name = (match.group(2) or "").casefold()
         if not name:
             continue
-
         if not closing:
-            if name in _VOID_TAGS or raw.rstrip().endswith("/>"):
-                continue
-            stack.append((name, match.start(), len(stack)))
+            if name not in _VOID_TAGS and not raw.rstrip().endswith("/>"):
+                stack.append((name, match.start()))
             continue
 
         matching_index = None
@@ -166,20 +381,10 @@ def _iter_word_section_paragraph_blocks(
             if stack[index][0] == name:
                 matching_index = index
                 break
-        if matching_index is None:
-            continue
+        if matching_index is not None:
+            del stack[matching_index:]
 
-        opened_name, opened_at, depth = stack[matching_index]
-        if opened_name == "p":
-            candidate = value[opened_at : match.end()]
-            yield WordSectionParagraphBlock(
-                start=opened_at,
-                end=match.end(),
-                raw_html=candidate,
-                depth=depth,
-                whitelist_name=WEEKLY_REPORT_SEPARATOR_NAME_BY_HTML.get(candidate),
-            )
-        del stack[matching_index:]
+    return inspect_text(cursor, scan_end)
 
 
 def _extract_from_word_section(
@@ -187,78 +392,73 @@ def _extract_from_word_section(
     *,
     scan_limit: int = WEEKLY_WORD_SECTION_SCAN_LIMIT,
 ) -> ExtractedWeeklyBody | None:
-    """Copy WordSection1 inner HTML up to the first exact top-level separator.
-
-    Production rules:
-
-    1. Find the first ``div.WordSection1``.
-    2. Start immediately after that opening tag.
-    3. Scan at most ``scan_limit`` characters for a complete ``p`` block whose
-       raw HTML exactly equals one standalone whitelist entry.
-    4. Accept it only when it is a direct child of WordSection1.  Identical
-       blocks inside tables, table cells, nested divs, or other containers are
-       ignored.
-    5. Copy the untouched raw HTML before the accepted block to Reply All.
-
-    There is no semantic fallback, font-family inference, entity decoding,
-    whitespace normalization, or DOM reserialization in separator matching.
-    """
-    if scan_limit <= 0:
-        raise ValueError("scan_limit 必须大于 0。")
-
+    """Compatibility helper using the new history-header boundary strategy."""
     section = _WORD_SECTION_OPEN_RE.search(value)
     if section is None:
         return None
+    return _extract_weekly_body(value, scan_limit=scan_limit, require_word_section=True)
 
-    closing = _matching_div_close(value, section)
-    section_end = closing[0] if closing else len(value)
-    content_start = section.end()
 
-    accepted: WordSectionParagraphBlock | None = None
-    for block in _iter_word_section_paragraph_blocks(
+def _extract_weekly_body(
+    value: str,
+    *,
+    scan_limit: int = WEEKLY_WORD_SECTION_SCAN_LIMIT,
+    require_word_section: bool = False,
+) -> ExtractedWeeklyBody:
+    """Extract only the newest visible weekly body without HTML reserialization.
+
+    The first visible ``发件人`` or standalone ``From`` marks the beginning of
+    quoted history.  Once found, the scanner rewinds to the depth-0 HTML block
+    containing that text and slices immediately before it.  If no marker exists,
+    the whole current message body is treated as the report, which is the normal
+    case for users who send a fresh message every week.
+    """
+    if scan_limit <= 0:
+        raise ValueError("scan_limit 必须大于 0。")
+    if not value.strip():
+        raise ValueError("最新周报 Body 为空。")
+
+    content_start, section_end, root_name, section_offset = _scan_root_bounds(value)
+    if require_word_section and root_name != "word_section1":
+        raise ValueError("最新周报中未找到 WordSection1。")
+    available = max(0, section_end - content_start)
+    boundary = _find_history_header_boundary(
         value,
         content_start=content_start,
         section_end=section_end,
         scan_limit=scan_limit,
-    ):
-        distance = block.start - content_start
-        if distance > scan_limit:
-            break
-        if block.accepted_separator:
-            accepted = block
-            break
-
-    if accepted is None:
-        available = max(0, section_end - content_start)
-        if available > scan_limit:
-            raise ValueError(
-                "已找到 WordSection1，但在找到顶层白名单周报分割线之前已超过 "
-                f"{scan_limit} 字符阈值，本次不会创建草稿。"
-            )
+    )
+    if boundary is None and available > scan_limit:
         raise ValueError(
-            "已找到 WordSection1，但其直属子块中没有找到与周报分割线白名单完全一致的 "
-            "HTML 块，本次不会创建草稿。"
+            "在确认周报正文是否包含历史邮件头之前已超过 "
+            f"{scan_limit} 字符扫描阈值，本次不会创建草稿。"
         )
 
-    boundary = accepted.start
-    report_body = value[content_start:boundary]
+    cut = boundary.boundary_offset if boundary is not None else section_end
+    report_body = value[content_start:cut]
     if not _visible_text_for_validation(report_body):
-        raise ValueError("WordSection1 与第一个顶层白名单周报分割线之间没有可复制的正文。")
+        marker = boundary.keyword if boundary is not None else "邮件正文结束"
+        raise ValueError(f"周报正文在 {marker!r} 边界之前为空，拒绝继续。")
 
     closed_candidate, closers = _close_open_html_fragment(report_body)
+    strategy = (
+        f"{root_name}_to_first_history_header"
+        if boundary is not None
+        else f"{root_name}_full_body_no_history_header"
+    )
     return ExtractedWeeklyBody(
         html=closed_candidate,
-        strategy="word_section1_to_first_top_level_whitelist_separator",
-        boundary_offset=boundary,
+        strategy=strategy,
+        boundary_offset=cut if boundary is not None else None,
         appended_closing_tags=closers,
-        word_section_offset=section.start(),
-        word_section_content_start=content_start,
-        scanned_characters=boundary - content_start,
+        word_section_offset=section_offset,
+        word_section_content_start=content_start if root_name == "word_section1" else None,
+        scanned_characters=(cut - content_start) if boundary is not None else available,
         scan_limit=scan_limit,
-        separator_variant=accepted.whitelist_name,
-        separator_language="en-us",
+        history_detected=boundary is not None,
+        history_keyword=boundary.keyword if boundary is not None else None,
+        scan_root=root_name,
     )
-
 
 def _close_open_html_fragment(value: str) -> tuple[str, tuple[str, ...]]:
     """Append only missing end tags after a raw string slice.
@@ -298,25 +498,15 @@ def extract_latest_weekly_body(
     unique_body_type: str | None,
     conversation_has_older_items: bool,
 ) -> ExtractedWeeklyBody:
-    """Extract the newest weekly report using only the confirmed Word layout.
+    """Extract the newest weekly-report body from one message.
 
-    ``unique_body_html``, ``unique_body_type`` and
-    ``conversation_has_older_items`` are retained in the public helper signature
-    for compatibility, but the weekly extractor deliberately ignores them. The
-    only accepted production layout is:
-
-    ``WordSection1 opening tag -> newest report HTML -> first direct-child exact-whitelist separator``.
+    ``UniqueBody`` and conversation metadata are intentionally not trusted for
+    production slicing because Exchange/Outlook variants do not expose them
+    consistently.  The original Body HTML is sliced byte-for-byte using the
+    visible ``发件人``/``From`` history-header strategy.
     """
     del unique_body_html, unique_body_type, conversation_has_older_items
-
-    full_inner = _body_inner(full_body_html)
-    result = _extract_from_word_section(full_inner)
-    if result is None:
-        raise ValueError(
-            "最新周报中未找到 WordSection1，本次不会创建周报草稿。"
-        )
-    return result
-
+    return _extract_weekly_body(full_body_html)
 
 def _scan_text_spans(fragment: str) -> Iterable[tuple[int, int, str]]:
     """Yield raw text spans outside tags/comments/script/style without rewriting HTML."""
@@ -483,105 +673,37 @@ def split_weekly_report_sections(
     max_reports: int = 5,
     scan_limit: int = 2_500_000,
 ) -> list[WeeklyReportSection]:
-    """Split the first WordSection1 into latest-to-oldest report fragments.
+    """Compatibility wrapper returning the newest report from one mail item.
 
-    A boundary is accepted only when a direct-child ``p`` block is an exact
-    member of the separator whitelist. One or two consecutive separators are
-    naturally supported: empty/whitespace-only chunks between them are skipped.
-    The original HTML is sliced; it is never DOM-reserialized.
+    Historical aggregation now happens at the workflow layer by searching the
+    latest ``max_reports`` mail items and extracting one top body from each.  A
+    single message is therefore never split into multiple weekly reports based
+    on Outlook-specific separator HTML.
     """
     if not 1 <= max_reports <= 20:
         raise ValueError("max_reports 必须在 1 到 20 之间。")
-    if scan_limit <= 0:
-        raise ValueError("scan_limit 必须大于 0。")
-    if not full_body_html.strip():
-        raise ValueError("最新周报 Body 为空。")
-
-    section = _WORD_SECTION_OPEN_RE.search(full_body_html)
-    if section is None:
-        raise ValueError("最新周报中未找到 WordSection1，无法提取历史周报。")
-    closing = _matching_div_close(full_body_html, section)
-    section_end = closing[0] if closing else len(full_body_html)
-    content_start = section.end()
-    hard_end = min(section_end, content_start + scan_limit)
-
-    separators: list[WordSectionParagraphBlock] = []
-    for block in _iter_word_section_paragraph_blocks(
-        full_body_html,
-        content_start=content_start,
-        section_end=section_end,
-        scan_limit=scan_limit,
-    ):
-        if block.start > hard_end:
-            break
-        if block.accepted_separator:
-            separators.append(block)
-
-    if not separators:
-        available = max(0, section_end - content_start)
-        if available > scan_limit:
-            raise ValueError(
-                "已找到 WordSection1，但在找到顶层白名单周报分割线之前已超过 "
-                f"{scan_limit} 字符阈值。"
-            )
-        raise ValueError(
-            "已找到 WordSection1，但其直属子块中没有找到与周报分割线白名单完全一致的 HTML 块。"
+    extracted = _extract_weekly_body(full_body_html, scan_limit=scan_limit)
+    text = visible_text(extracted.html, limit=None)
+    if not text:
+        raise ValueError("邮件中没有提取到非空周报正文。")
+    start = extracted.word_section_content_start
+    if start is None:
+        content_start, _, _, _ = _scan_root_bounds(full_body_html)
+        start = content_start
+    end = extracted.boundary_offset
+    if end is None:
+        _, section_end, _, _ = _scan_root_bounds(full_body_html)
+        end = section_end
+    return [
+        WeeklyReportSection(
+            index=1,
+            html=extracted.html,
+            text=text,
+            start=start,
+            end=end,
+            appended_closing_tags=extracted.appended_closing_tags,
         )
-
-    sections: list[WeeklyReportSection] = []
-    cursor = content_start
-
-    def add_chunk(start: int, end: int) -> None:
-        if len(sections) >= max_reports or end < start:
-            return
-        raw = full_body_html[start:end]
-        if not _visible_text_for_validation(raw):
-            return
-        closed, closers = _close_open_html_fragment(raw)
-        sections.append(
-            WeeklyReportSection(
-                index=len(sections) + 1,
-                html=closed,
-                text=visible_text(closed, limit=None),
-                start=start,
-                end=end,
-                appended_closing_tags=closers,
-            )
-        )
-
-    separator_index = 0
-    while separator_index < len(separators) and len(sections) < max_reports:
-        separator = separators[separator_index]
-        add_chunk(cursor, separator.start)
-        boundary_count = 1
-        cursor = separator.end
-        separator_index += 1
-        while separator_index < len(separators):
-            next_separator = separators[separator_index]
-            between = full_body_html[cursor:next_separator.start]
-            if _visible_text_for_validation(between):
-                break
-            boundary_count += 1
-            if boundary_count > 2:
-                raise ValueError(
-                    "同一个周报边界连续出现超过 2 个白名单分割块；"
-                    "无法确认历史结构，拒绝继续。"
-                )
-            cursor = next_separator.end
-            separator_index += 1
-
-    if len(sections) < max_reports and cursor < section_end:
-        if hard_end < section_end:
-            raise ValueError(
-                "在完整提取所需历史周报之前已超过上下文扫描字符阈值；"
-                "不会返回被截断的周报文本。"
-            )
-        add_chunk(cursor, section_end)
-
-    if not sections:
-        raise ValueError("WordSection1 中没有提取到任何非空周报正文。")
-    return sections
-
+    ]
 
 def _consume_markup(value: str, start: int) -> tuple[int, str, str | None, bool, bool] | None:
     """Consume one HTML markup token with quote-aware ``>`` handling."""
@@ -1174,11 +1296,12 @@ def compact_editable_text_slots_for_agent(
     *,
     template_html: str | None = None,
 ) -> list[dict[str, Any]]:
-    """Return the compact production view of editable text slots.
+    """Return the compact Agent-facing view of editable text slots.
 
-    Full layout analysis is still performed internally, but only ``slot_id``,
-    current ``text`` and one nullable ``location`` summary cross the MCP tool
-    boundary.  This prevents large tables from exhausting the Agent context.
+    The public id is deliberately local to one ``weekly_report`` context:
+    ``s1``, ``s2`` ... map by ordinal to the server-side slot manifest.  The
+    long deterministic internal slot id, offsets and HTML path never cross the
+    MCP boundary.  ``loc`` is advisory only and is omitted when unavailable.
     """
     layout_by_slot: dict[str, dict[str, Any]] = {}
     layout_status = "not_requested"
@@ -1191,21 +1314,20 @@ def compact_editable_text_slots_for_agent(
             layout_status = "unavailable"
 
     compact: list[dict[str, Any]] = []
-    for slot in slots:
+    for index, slot in enumerate(slots, start=1):
         layout_context = dict(
             layout_by_slot.get(slot.slot_id)
             or _empty_layout_context(status=layout_status)
         )
         layout_context.setdefault("analysis_status", layout_status)
-        compact.append(
-            {
-                "slot_id": slot.slot_id,
-                "text": slot.text,
-                "location": _compact_slot_location(
-                    {"layout_context": layout_context}
-                ),
-            }
-        )
+        item: dict[str, Any] = {
+            "id": f"s{index}",
+            "text": slot.text,
+        }
+        location = _compact_slot_location({"layout_context": layout_context})
+        if location is not None:
+            item["loc"] = location
+        compact.append(item)
     return compact
 
 
@@ -1265,7 +1387,7 @@ def apply_editable_text_slot_changes(
         seen.add(slot_id)
         slot = by_id.get(slot_id)
         if slot is None:
-            raise ValueError(f"未知或已过期的 slot_id：{slot_id}。")
+            raise ValueError(f"slot_id 不属于当前模板：{slot_id}。")
 
         if "new_text" not in raw_change:
             raise ValueError(f"changes[{index}].new_text 缺失。")
@@ -1298,47 +1420,3 @@ def apply_editable_text_slot_changes(
         changed_slot_ids=tuple(item[3] for item in replacements),
         html_validation=validation,
     )
-
-
-def build_weekly_report_agent_prompt(
-    *,
-    user_input: str,
-    reports: list[WeeklyReportSection],
-    editable_slots: list[dict[str, Any]],
-    reference_materials: list[dict[str, str]] | None = None,
-    embed_slots: bool = True,
-) -> str:
-    """Build deterministic instructions for polished slot-based editing."""
-    materials = reference_materials or []
-    material_parts: list[str] = []
-    for index, item in enumerate(materials, start=1):
-        name = str(item.get("name") or f"材料 {index}").strip()
-        content = str(item.get("content") or "")
-        material_parts.append(f"[参考材料 {index}: {name}]\n{content}")
-    report_parts = [
-        f"[历史周报 {item.index}，1 为最新]\n{item.text}" for item in reports
-    ]
-    slot_payload = json.dumps(editable_slots, ensure_ascii=False, separators=(",", ":"))
-    slot_section = (
-        f"[可编辑文本槽位]\n{slot_payload}"
-        if embed_slots
-        else "[可编辑文本槽位]\n请直接使用本次工具结果中的 editable_slots 字段；不要从其他会话或旧工具结果复制 slot_id。"
-    )
-    return "\n\n".join(
-        [
-            "【任务目标】\n你正在生成下一周周报。必须完整比较所有历史周报，理解每个项目连续几周的变化，并结合用户本次输入和参考材料决定哪些槽位需要更新。",
-            "【强制工具顺序】\n当前上下文来自 get_weekly_report_context。完成分析后，只能使用本次返回的 weekly_flow_token 调用一次 update_weekly_report。不得跳过第一步、不得自行构造 token、不得复用旧 token。",
-            "【信息优先级】\n用户本次明确输入 > 本次参考材料 > 最新一周周报 > 更早历史周报。历史周报用于识别项目正式名称、术语、上下文和连续变化，不得用过期状态覆盖用户本次事实。",
-            "【日期硬校验】\n在生成 changes 前，必须逐一检查本次 editable_slots 中所有包含日期、日期范围、星期、周次或月份的文本槽位，不得只检查标题。凡属于周报周期、周报标题、表头、本周计划或下周计划的继承日期，都必须更新为新一周对应日期，即使用户没有额外提醒‘改日期’也不能遗漏。若历史周报呈固定七天周期，默认保持原格式并将最新周期整体顺延七天。项目事实中的固定发生日期、里程碑日期或用户明确要求保留的日期不得机械平移。若无法判断某个日期是周期日期还是事实日期，或无法确定正确的新日期，不得猜测、不得调用 update_weekly_report，应先向用户确认。调用 update_weekly_report 前必须再次复核全部日期槽位，确保所有应更新日期都已包含在 changes 中。",
-            "【周报化改写要求】\n用户输入只是口语化事实记录，不是可以直接粘贴的最终周报。你必须先理解事实，再将其改写为简洁、正式、客观、适合工作周报的书面表达。不得机械复制用户的口语；若用户输入本身已经是规范周报表述，可以保留其准确措辞。",
-            "周报化改写应遵守：\n1. 删除“这周、那个、差不多、没怎么、已经吧”等无必要口语和语气词；\n2. 优先使用清晰的动宾结构，例如“完成接口联调”“开展性能测试”“等待测试环境就绪”；\n3. 延续历史周报中的正式项目名称、技术术语、语气和详略程度；\n4. 根据槽位上下文决定是否需要项目名，避免在同一行重复项目名称；\n5. 合并重复信息，new_text 必须是该槽位最终应显示的完整文本，而不是修改说明或零散补丁；\n6. 不得添加用户和材料未提供的事实，不得把“阶段完成”夸大为“项目完成”，不得虚构时间、指标、结果或负责人；\n7. 用户说“没有变化”“保持不变”时，不要把这句话写入周报，也不要提交该槽位；\n8. 用户明确要求删除时，将对应槽位 new_text 设置为空字符串。",
-            "【改写示例】\n用户输入：“A这周联调完了。” → 合适的进展槽位文本：“完成接口联调。”\n用户输入：“B还在等环境。” → 合适的进展槽位文本：“等待测试环境就绪。”\n用户输入：“项目C没什么变化。” → 不提交项目C槽位，不要写“暂无变化”。\n用户输入：“邮件那个项目现在可以reply all了。” → 结合历史正式名称改写为类似“完成 Reply All 功能开发。”，但不得照搬示例中的项目名称或事实。",
-            "【槽位与版面规则】\n你不会接触或生成 HTML。只能从【可编辑文本槽位】中选择需要变化的 slot_id，并为它提供完整的新纯文本。生产槽位只包含 slot_id、text 和可空的 location：location 是 Server 根据复杂表格逻辑网格、rowspan/colspan、多级表头、嵌套表、标题、段落和列表等完整内部分析压缩得到的位置摘要。location 为 null 表示无法可靠判断，不得自行补造。表格槽位必须同时结合 location 中的行信息与列信息，尤其不得把“下周计划”写入“本周进展”；location 含“表头”时，除非用户明确要求修改表头或日期，否则不要提交。未被用户输入或参考材料明确影响的槽位不要提交，默认原样继承最新一周。不得虚构 slot_id，不得在 new_text 中输出 HTML 标签。",
-            "【调用格式】\n调用 update_weekly_report 时，changes 的每一项只能包含 slot_id 和 new_text。slot_id 必须直接取自本次【可编辑文本槽位】；new_text 是周报化改写后的完整纯文本。不要重复提交旧文本，不要返回完整 HTML，不要在工具调用之外输出修改说明。",
-            f"[用户本周输入]\n{user_input}",
-            "\n\n".join(material_parts) if material_parts else "[参考材料]\n无",
-            "\n\n".join(report_parts),
-            slot_section,
-        ]
-    )
-

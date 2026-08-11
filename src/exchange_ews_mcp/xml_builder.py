@@ -6,6 +6,7 @@ from xml.etree import ElementTree as ET
 
 SOAP_NS = "http://schemas.xmlsoap.org/soap/envelope/"
 MESSAGES_NS = "http://schemas.microsoft.com/exchange/services/2006/messages"
+AVAILABILITY_ATTENDEE_TYPES = frozenset({"Organizer", "Required", "Optional"})
 TYPES_NS = "http://schemas.microsoft.com/exchange/services/2006/types"
 
 ET.register_namespace("soap", SOAP_NS)
@@ -507,9 +508,14 @@ def build_get_user_availability_request(
         email = ET.SubElement(mailbox_data, q(TYPES_NS, "Email"))
         ET.SubElement(email, q(TYPES_NS, "Address")).text = attendee["email"]
         ET.SubElement(email, q(TYPES_NS, "RoutingType")).text = "SMTP"
-        ET.SubElement(mailbox_data, q(TYPES_NS, "AttendeeType")).text = attendee.get(
-            "attendee_type", "Required"
-        )
+        attendee_type = str(attendee.get("attendee_type") or "Required").strip()
+        if attendee_type not in AVAILABILITY_ATTENDEE_TYPES:
+            allowed = ", ".join(sorted(AVAILABILITY_ATTENDEE_TYPES))
+            raise ValueError(
+                f"不支持的 attendee_type：{attendee_type!r}。仅支持 {allowed}；"
+                "会议室/资源邮箱忙闲查询未启用。"
+            )
+        ET.SubElement(mailbox_data, q(TYPES_NS, "AttendeeType")).text = attendee_type
         ET.SubElement(mailbox_data, q(TYPES_NS, "ExcludeConflicts")).text = "false"
     options = ET.SubElement(request, q(TYPES_NS, "FreeBusyViewOptions"))
     window = ET.SubElement(options, q(TYPES_NS, "TimeWindow"))

@@ -1,4 +1,4 @@
-# Exchange EWS MCP v0.7.0
+# Exchange EWS MCP v0.8.3
 
 **English** | [简体中文](README.zh-CN.md)
 
@@ -148,7 +148,7 @@ You can also run:
 .\.venv\Scripts\exchange-ews-mcp.exe tool-list
 ```
 
-Expected version: `0.7.0` · Production tools: `11`
+Expected version: `0.8.3` · Production tools: `11`
 
 🎉 Done — your Agent can now work with Exchange.
 
@@ -172,10 +172,10 @@ Find the earliest one-hour slot next week when lixiaohong and I are both free, c
 | --- | --- |
 | Mail | Search/read mail, compose drafts, reply, forward, edit drafts, attachments |
 | People | Recipient resolution and ambiguity handling |
-| Weekly reports | Read recent history and create an updated Reply All draft without rebuilding the HTML template |
+| Weekly reports | Read recent history and create an updated Reply All or fresh Compose draft without rebuilding HTML |
 | Calendar | Availability, common slots, calendar reads, create/update meetings, send invitations |
 
-The compact mail facade uses `search_mail`, `read_mail`, `save_mail_draft`, and `edit_mail_draft`. Weekly reports keep the mandatory `get_weekly_report_context` → `update_weekly_report` sequence. Calendar creation/editing uses `save_meeting`; confirmed sending uses `send_meeting_invitation`.
+The compact mail facade uses `search_mail`, `read_mail`, `resolve_people`, `save_mail_draft`, and `edit_mail_draft`. Weekly reports use the single `weekly_report` entry followed by `continue_action`; HTML always remains server-owned. Calendar creation/editing uses `save_meeting`; confirmed sending uses `send_meeting_invitation`.
 
 ## 📝 Weekly reports
 
@@ -188,10 +188,10 @@ Agent decides what changed
       ↓
 Update only relevant text
       ↓
-Create a new Reply All draft
+Create an unsent Reply All or fresh Compose draft
 ```
 
-The Agent does **not** regenerate the whole HTML template. The server keeps the existing layout and updates approved text slots only.
+The Agent does **not** regenerate the whole HTML template. The server keeps the existing layout and updates approved text slots only. The Agent receives three weeks of context total (current editable report plus two prior reports), uses short local slot IDs such as `s1`, and the server automatically advances supported Subject date/week markers for the next draft.
 
 ## 🔒 Safety in short
 

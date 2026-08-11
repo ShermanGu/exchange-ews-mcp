@@ -9,6 +9,7 @@ step because it requires the maintainer's Windows credentials and test mailbox.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import importlib.util
 import os
 from pathlib import Path
@@ -17,7 +18,7 @@ import subprocess
 import sys
 
 ROOT = Path(__file__).resolve().parents[1]
-EXPECTED_VERSION = "0.7.0"
+EXPECTED_VERSION = "0.8.3"
 EXPECTED_PRODUCTION_TOOLS = 11
 EXPECTED_DEBUG_TOOLS = 17
 EXPECTED_DT_GROUPS = (
@@ -104,6 +105,19 @@ def static_checks() -> None:
     if "python scripts\\release_check.py" not in release_wrapper:
         raise SystemExit("run-release-check.cmd must prefer the current shell Python")
 
+    ci_text = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+    expected_ci_artifact = f"exchange-ews-mcp-v{EXPECTED_VERSION}-distributions"
+    if expected_ci_artifact not in ci_text:
+        raise SystemExit(f"CI distribution artifact must be named {expected_ci_artifact}")
+
+    release_audit = (ROOT / "docs/RELEASE-AUDIT.md").read_text(encoding="utf-8")
+    if f"v{EXPECTED_VERSION}" not in release_audit:
+        raise SystemExit("docs/RELEASE-AUDIT.md is not synchronized to the release version")
+    if f"Production tool profile: **{EXPECTED_PRODUCTION_TOOLS}** tools" not in release_audit:
+        raise SystemExit("docs/RELEASE-AUDIT.md has a stale Production tool count")
+    if f"Debug tool profile: **{EXPECTED_DEBUG_TOOLS}** tools" not in release_audit:
+        raise SystemExit("docs/RELEASE-AUDIT.md has a stale Debug tool count")
+
     checker_text = (ROOT / "scripts/release_check.py").read_text(encoding="utf-8")
     if 'sys.executable, "-m", "pytest"' not in checker_text:
         raise SystemExit("scripts/release_check.py must invoke pytest through python -m pytest")
@@ -131,8 +145,8 @@ def static_checks() -> None:
         text = (ROOT / doc).read_text(encoding="utf-8")
         if EXPECTED_VERSION not in text:
             raise SystemExit(f"{doc} does not mention {EXPECTED_VERSION}")
-        if "get_weekly_report_context" not in text or "update_weekly_report" not in text:
-            raise SystemExit(f"{doc} does not document both weekly-report tools")
+        if "weekly_report" not in text or "continue_action" not in text:
+            raise SystemExit(f"{doc} does not document the weekly_report -> continue_action contract")
         if "save_meeting" not in text or "send_meeting_invitation" not in text:
             raise SystemExit(f"{doc} does not document both saved-meeting tools")
 
@@ -221,6 +235,25 @@ def build_distributions(output_dir: Path) -> None:
         ])
 
 
+def write_sha256_manifest(output_dir: Path) -> Path:
+    """Write SHA-256 checksums for built distribution artifacts."""
+    artifacts = sorted(
+        path for path in output_dir.iterdir()
+        if path.is_file() and path.name != "SHA256SUMS.txt"
+    )
+    if not artifacts:
+        raise SystemExit(f"No distribution artifacts found in {output_dir}")
+
+    lines = []
+    for artifact in artifacts:
+        digest = hashlib.sha256(artifact.read_bytes()).hexdigest()
+        lines.append(f"{digest}  {artifact.name}")
+    manifest = output_dir / "SHA256SUMS.txt"
+    manifest.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    print(f"Wrote checksum manifest: {manifest.relative_to(ROOT)}")
+    return manifest
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--skip-tests", action="store_true")
@@ -236,7 +269,9 @@ def main() -> int:
         run([sys.executable, "-m", "pytest", "-W", "error::ResourceWarning"], env=env)
         run([sys.executable, "-m", "compileall", "-q", "src", "tests", "scripts"])
     if not args.skip_build:
-        build_distributions(ROOT / args.dist_dir)
+        dist_dir = ROOT / args.dist_dir
+        build_distributions(dist_dir)
+        write_sha256_manifest(dist_dir)
     print("Release validation completed. Live Exchange DT must be run separately; see docs/DT.md.")
     return 0
 

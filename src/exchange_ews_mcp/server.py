@@ -314,17 +314,13 @@ def get_weekly_report_context(
     folder: str = "sentitems",
     folders: list[str] | None = None,
     lookback_days: int = 60,
-    max_reports: int = 5,
+    max_reports: int = 3,
 ) -> dict[str, Any]:
-    """每次新的周报更新请求都必须首先调用本工具。
+    """内部兼容 helper；不注册为 Agent MCP tool。
 
-    读取最多五周周报纯文本，内部完成复杂表格与非表格版面分析，但每个
-    可编辑槽位只返回 slot_id、text 和可空的精简 location，以避免撑爆 Agent
-    上下文；完整 Agent Prompt 与周报化改写规则不压缩。同时返回随机、30 分钟
-    有效、只能使用一次的 weekly_flow_token。即使当前会话中存在旧
-    token，也必须针对用户这一次输入重新调用本工具；新上下文会使旧的未用
-    token 失效。reference_materials 是 Agent 已读取的可选文件纯文本。
-    本工具不创建 Exchange 草稿，也不把 HTML 暴露给 Agent。
+    最多读取三周：最新一周返回为短 id 的 slots，前两周作为纯文本 history。
+    HTML、内部 slot id、offset/hash、收件人等全部保留在 Server 的 resume_token
+    上下文中；本 helper 只读，不创建 Exchange 草稿。
     """
     return service.get_weekly_report_context(
         user_input=user_input,
@@ -337,17 +333,52 @@ def get_weekly_report_context(
     )
 
 
+def weekly_report(
+    user_input: str,
+    reference_materials: list[dict[str, str]] | None = None,
+    subject_contains: str = "周报",
+    folder: str = "sentitems",
+    folders: list[str] | None = None,
+    lookback_days: int = 60,
+) -> dict[str, Any]:
+    """处理“周报”请求的唯一 Agent 入口。
+
+    返回紧凑 JSON：resume_token、mode、subject、request、最新模板的 slots，
+    以及前两周 history。slots.id 是本次上下文局部短 ID（s1、s2...），必须原样
+    使用，不得猜测或自行构造；loc 只用于理解版面，不参与真正写入定位。
+
+    生成下一周内容时：用户本次事实优先于历史；只提交确实需要变化的槽位；
+    将口语化事实改写为简洁、正式、客观的周报文本；延续历史中的正式项目名和
+    技术术语，不得虚构事实。必须检查正文中所有周期性日期/周次并顺延。Server
+    会自动把可识别的 Subject 日期/周次顺延一周；返回的 subject 已是默认草稿主题。
+    然后调用 continue_action(resume_token=..., selections={"changes":[{"id":"s1","text":"..."}]})。
+    仅当用户明确要求不同主题时才传 selections.subject 覆盖默认值。本地参数错误时修正后复用同一 token；只有明确
+    context_stale、token 过期/已使用/被取代时才重新调用 weekly_report。
+
+    本工具不创建草稿，也绝不向 Agent 暴露 HTML。Server 会在 continue_action
+    阶段自动决定 Reply All 或新建草稿。
+    """
+    return service.weekly_report(
+        user_input=user_input,
+        reference_materials=reference_materials,
+        subject_contains=subject_contains,
+        folder=folder,
+        folders=folders,
+        lookback_days=lookback_days,
+    )
+
+
 def update_weekly_report(
     weekly_flow_token: str,
     changes: list[dict[str, str]],
     subject: str | None = None,
 ) -> dict[str, Any]:
-    """只能作为 get_weekly_report_context 之后的第二步调用。
+    """内部兼容 helper；不注册为 Agent MCP tool。
 
-    weekly_flow_token 必须是针对用户本次输入刚返回的有效 token；旧 token、
+    Agent 第二步统一调用 continue_action。weekly_flow_token 必须是针对用户本次输入刚返回的有效 token；旧 token、
     重复调用、并发调用、过期 token 或被新上下文替代的 token 都会在任何
-    Exchange 写入前被拒绝。changes 中每项只包含本次上下文中的 slot_id 和
-    经周报化改写的 new_text。Server 自行取得原槽位文本，填回原模板并创建 Reply All 草稿。
+    Exchange 写入前被拒绝。changes 中每项只包含本次上下文中的短 id 和
+    经周报化改写的 text。Server 自行取得原槽位文本，填回原模板，并按已记录的 draft_mode 创建 Reply All 或新建草稿。
     """
     return service.update_weekly_report(
         weekly_flow_token=weekly_flow_token,
@@ -391,9 +422,14 @@ def forward_email(
 
 def continue_action(
     resume_token: str,
-    selections: dict[str, str],
+    selections: dict[str, Any],
 ) -> dict[str, Any]:
-    """用用户确认的人员、邮件、时间或发送选择恢复被中断的任务。"""
+    """恢复人员/邮件/时间确认，或提交 weekly_report 周报修改。
+
+    周报 selections 仅支持 changes 和可选 subject；changes 每项使用 weekly_report
+    返回的短 id/text，例如 {"id":"s3","text":"完成接口联调"}。weekly_report 返回的
+    subject 已是 Server 自动顺延后的默认草稿主题；通常无需再次提交 subject。
+    """
     return service.continue_action(resume_token=resume_token, selections=selections)
 
 
@@ -430,7 +466,7 @@ def get_user_availability(
     """查询一组邮箱在指定时间窗口内的忙闲事件和 EWS 工作时间。
 
     start/end 接受 ISO 8601；未带偏移时按 calendar_time_zone 解释。attendees 中每项包含 email，
-    attendee_type 可为 Organizer/Required/Optional/Room/Resource。
+    attendee_type 仅支持 Organizer/Required/Optional；不支持会议室或资源邮箱。
     """
     return service.get_user_availability(
         attendees=attendees, start=start, end=end, interval_minutes=interval_minutes
@@ -607,8 +643,9 @@ def search_mail(
     offset: int = 0,
     lookback_days: int = 365,
 ) -> dict[str, Any]:
-    """统一查找邮件并返回稳定的 message_ref。
+    """统一查找邮件并返回类型安全的稳定引用。
 
+    普通邮件返回 message_ref；草稿返回 draft_ref，不会同时伪装成可回复的消息。
     无过滤条件时列出 inbox/sentitems 中最近邮件；姓名拼音或完整邮箱由 Server
     解析和消歧。需要用户选择时返回 resume_token，由 continue_action 恢复。
     """

@@ -13,7 +13,7 @@ from .calendar_utils import (
     format_utc,
     parse_input_datetime,
 )
-from .ews import EwsClient
+from .ews import AVAILABILITY_ATTENDEE_TYPES, EwsClient
 from .state_store import ReferenceStore
 
 
@@ -38,27 +38,29 @@ def _message_payload(item: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _attach_message_ref(item: dict[str, Any], store: ReferenceStore) -> dict[str, Any]:
+def _attach_mail_ref(item: dict[str, Any], store: ReferenceStore) -> dict[str, Any]:
+    """Attach exactly one typed Agent reference to a mail item.
+
+    Drafts are intentionally *not* given a parallel message_ref.  A draft can be
+    read through draft_ref and edited through edit_mail_draft, but it must never
+    become an accidental source for reply/forward flows that require message_ref.
+    """
     result = dict(item)
-    item_id = item.get("item_id")
-    if item_id:
-        kind = "draft" if item.get("is_draft") is True else "message"
-        ref = store.upsert_reference(
-            kind=kind,
-            external_key=str(item_id),
-            payload=_message_payload(item),
-            ttl_days=30 if kind == "draft" else 7,
-        )
-        result[f"{kind}_ref"] = ref
-        result["reference_kind"] = kind
-        if kind == "draft":
-            result["update_tool"] = "edit_mail_draft"
-            result["message_ref"] = store.upsert_reference(
-                kind="message",
-                external_key=str(item_id),
-                payload=_message_payload(item),
-                ttl_days=7,
-            )
+    item_id = str(item.get("item_id") or "").strip()
+    if not item_id:
+        return result
+    folder = str(item.get("folder") or "").strip().casefold()
+    kind = "draft" if item.get("is_draft") is True or folder == "drafts" else "message"
+    ref = store.upsert_reference(
+        kind=kind,
+        external_key=item_id,
+        payload=_message_payload(item),
+        ttl_days=30 if kind == "draft" else 7,
+    )
+    result[f"{kind}_ref"] = ref
+    result["reference_kind"] = kind
+    if kind == "draft":
+        result["update_tool"] = "edit_mail_draft"
     return result
 
 
@@ -97,7 +99,12 @@ def _resolve_item(
     if draft_ref:
         stored = store.get_reference(draft_ref, expected_kind="draft")
     else:
-        expected_kind = "draft" if expected_draft else None
+        # A value supplied through message_ref must actually be a message ref.
+        # Do not accept draft/calendar/person references merely because they share
+        # the same opaque string shape. expected_draft is retained for low-level
+        # callers that intentionally route a message_ref-shaped parameter to a
+        # draft-only operation.
+        expected_kind = "draft" if expected_draft else "message"
         stored = store.get_reference(str(message_ref), expected_kind=expected_kind)
     return str(stored.payload["item_id"]), stored.payload.get("change_key")
 
@@ -161,7 +168,7 @@ def create_draft(
 def list_emails(**kwargs: Any) -> dict[str, Any]:
     result = configured_client().list_emails(**kwargs)
     store = configured_store()
-    return {**result, "items": [_attach_message_ref(item, store) for item in result["items"]]}
+    return {**result, "items": [_attach_mail_ref(item, store) for item in result["items"]]}
 
 
 def search_emails(*, folders: list[str] | None = None, **kwargs: Any) -> dict[str, Any]:
@@ -172,7 +179,7 @@ def search_emails(*, folders: list[str] | None = None, **kwargs: Any) -> dict[st
     else:
         result = client.search_emails(**kwargs)
     store = configured_store()
-    return {**result, "items": [_attach_message_ref(item, store) for item in result["items"]]}
+    return {**result, "items": [_attach_mail_ref(item, store) for item in result["items"]]}
 
 
 def get_email(
@@ -191,7 +198,7 @@ def get_email(
         change_key=change_key or stored_key,
         max_body_chars=max_body_chars,
     )
-    return _attach_message_ref(result, configured_store())
+    return _attach_mail_ref(result, configured_store())
 
 
 def reply_as_draft(
@@ -401,7 +408,7 @@ def get_weekly_report_context(
     folder: str = "sentitems",
     folders: list[str] | None = None,
     lookback_days: int = 60,
-    max_reports: int = 5,
+    max_reports: int = 3,
 ) -> dict[str, Any]:
     return configured_workflow().get_weekly_report_context(
         user_input=user_input,
@@ -411,6 +418,27 @@ def get_weekly_report_context(
         folders=folders,
         lookback_days=lookback_days,
         max_reports=max_reports,
+    )
+
+
+def weekly_report(
+    *,
+    user_input: str,
+    reference_materials: list[dict[str, str]] | None = None,
+    subject_contains: str = "周报",
+    folder: str = "sentitems",
+    folders: list[str] | None = None,
+    lookback_days: int = 60,
+) -> dict[str, Any]:
+    """Agent-facing weekly-report entry point; Exchange read-only in step one."""
+    return get_weekly_report_context(
+        user_input=user_input,
+        reference_materials=reference_materials,
+        subject_contains=subject_contains,
+        folder=folder,
+        folders=folders,
+        lookback_days=lookback_days,
+        max_reports=3,
     )
 
 
@@ -460,17 +488,37 @@ def forward_email(
     )
 
 
-def continue_action(*, resume_token: str, selections: dict[str, str]) -> dict[str, Any]:
+_MAIL_RESUMABLE_ACTIONS = frozenset({
+    "compose_email",
+    "find_email",
+    "reply_to_email",
+    "forward_email",
+    "weekly_report_update",
+})
+_CALENDAR_RESUMABLE_ACTIONS = frozenset({
+    "find_meeting_times",
+    "schedule_meeting",
+    "schedule_meeting_send_confirmation",
+})
+
+
+def continue_action(*, resume_token: str, selections: dict[str, Any]) -> dict[str, Any]:
+    """Route a resume token only to the workflow that originally created it."""
     store = configured_store()
     session = store.get_action_session(resume_token)
-    action = str((session.get("state") or {}).get("action") or "")
-    if action in {"find_meeting_times", "schedule_meeting", "schedule_meeting_send_confirmation"}:
+    action = str((session.get("state") or {}).get("action") or "").strip()
+    if action in _CALENDAR_RESUMABLE_ACTIONS:
         return configured_calendar_workflow().continue_action(
             resume_token=resume_token, selections=selections
         )
-    return configured_workflow().continue_action(
-        resume_token=resume_token,
-        selections=selections,
+    if action in _MAIL_RESUMABLE_ACTIONS:
+        return configured_workflow().continue_action(
+            resume_token=resume_token,
+            selections=selections,
+        )
+    raise ValueError(
+        f"resume_token 对应未知或不支持的恢复任务类型：{action!r}。"
+        "请重新执行产生该确认请求的工具。"
     )
 
 
@@ -584,6 +632,29 @@ def save_mail_draft(
             )
     return {**result, "mail_draft_mode": operation, "sent": False}
 
+def _validate_agent_draft_ref(draft_ref: str) -> dict[str, Any] | None:
+    """Validate reference kind before file preflight or any Exchange write."""
+    normalized = str(draft_ref or "").strip()
+    if not normalized:
+        raise ValueError("draft_ref 不能为空。")
+    stored = configured_store().get_reference(normalized)
+    if stored.kind == "calendar":
+        return {
+            "status": "wrong_reference_type",
+            "reference_kind": "calendar",
+            "calendar_ref": normalized,
+            "recommended_tool": "save_meeting",
+            "message": (
+                "该引用属于日历项目，未执行邮件草稿更新。"
+                "请使用 save_meeting(calendar_ref=...) 修改会议。"
+            ),
+        }
+    if stored.kind != "draft":
+        raise ValueError(
+            f"引用 {normalized} 的类型是 {stored.kind}，不是 draft。"
+        )
+    return None
+
 
 def edit_mail_draft(
     *,
@@ -597,6 +668,10 @@ def edit_mail_draft(
     attachments: list[str] | None = None,
 ) -> dict[str, Any]:
     """Update one draft and optionally append allow-listed local files."""
+    wrong_reference = _validate_agent_draft_ref(draft_ref)
+    if wrong_reference is not None:
+        return {**wrong_reference, "sent": False}
+
     update_requested = any(
         value is not None for value in (subject, body_html, to, cc, bcc, importance)
     )
@@ -644,25 +719,12 @@ def edit_mail_draft(
 
 
 def update_email_draft(**kwargs: Any) -> dict[str, Any]:
-    """Update an email draft only; calendar references are routed back to the Agent safely."""
+    """Update an email draft only; calendar references are routed back safely."""
     draft_ref = str(kwargs.get("draft_ref") or "").strip()
     if draft_ref:
-        stored = configured_store().get_reference(draft_ref)
-        if stored.kind == "calendar":
-            return {
-                "status": "wrong_reference_type",
-                "reference_kind": "calendar",
-                "calendar_ref": draft_ref,
-                "recommended_tool": "save_meeting",
-                "message": (
-                    "该引用属于日历项目，未执行邮件草稿更新。"
-                    "请使用 save_meeting(calendar_ref=...) 修改会议。"
-                ),
-            }
-        if stored.kind != "draft":
-            raise ValueError(
-                f"引用 {draft_ref} 的类型是 {stored.kind}，不是 draft。"
-            )
+        wrong_reference = _validate_agent_draft_ref(draft_ref)
+        if wrong_reference is not None:
+            return wrong_reference
     return update_draft(**kwargs)
 
 
@@ -738,6 +800,18 @@ def get_user_availability(
     end: str,
     interval_minutes: int = 30,
 ) -> dict[str, Any]:
+    if not attendees:
+        raise ValueError("attendees 不能为空。")
+    for index, raw in enumerate(attendees):
+        if not isinstance(raw, dict):
+            raise ValueError(f"attendees[{index}] 必须是包含 email 的对象。")
+        attendee_type = str(raw.get("attendee_type") or "Required").strip()
+        if attendee_type not in AVAILABILITY_ATTENDEE_TYPES:
+            allowed = ", ".join(sorted(AVAILABILITY_ATTENDEE_TYPES))
+            raise ValueError(
+                f"不支持的 attendee_type：{attendee_type!r}。仅支持 {allowed}；"
+                "会议室/资源邮箱忙闲查询未启用。"
+            )
     config = load_config()
     start_dt = parse_input_datetime(start, config.calendar_time_zone, "start")
     end_dt = parse_input_datetime(end, config.calendar_time_zone, "end")

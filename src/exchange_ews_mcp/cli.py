@@ -1016,7 +1016,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.set_defaults(func=set_calendar_preferences)
 
     p = sub.add_parser("availability", help="使用完整邮箱查询 EWS 忙闲信息")
-    p.add_argument("--attendee", action="append", required=True, help="email 或 email:AttendeeType")
+    p.add_argument("--attendee", action="append", required=True, help="email 或 email:Organizer|Required|Optional（不支持 Room/Resource）")
     p.add_argument("--start", required=True, help="ISO 8601；无偏移时按 calendar_time_zone 解释")
     p.add_argument("--end", required=True, help="ISO 8601；无偏移时按 calendar_time_zone 解释")
     p.add_argument("--interval-minutes", type=int, default=30)
@@ -1134,11 +1134,11 @@ def build_parser() -> argparse.ArgumentParser:
     p.set_defaults(func=tool_list)
 
     p = sub.add_parser("mcp-config", help="输出可粘贴到 MCP 客户端的 stdio 配置")
-    p.add_argument("--debug-tools", action="store_true", help="输出包含 17 个工具的调试 server 配置")
+    p.add_argument("--debug-tools", action="store_true", help="输出包含 18 个工具的调试 server 配置")
     p.set_defaults(func=mcp_config)
 
     p = sub.add_parser("serve", help="启动 stdio MCP server")
-    p.add_argument("--debug-tools", action="store_true", help="暴露 11 个生产工具和 6 个调试原语")
+    p.add_argument("--debug-tools", action="store_true", help="暴露 12 个生产工具和 6 个调试原语")
     p.set_defaults(func=serve)
 
     p = sub.add_parser("reset-local", help="删除本地配置、DT 配置、状态库和已保存密码")

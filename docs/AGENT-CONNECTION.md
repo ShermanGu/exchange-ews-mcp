@@ -1,4 +1,4 @@
-# Connect an Agent to Exchange EWS MCP v0.7.0
+# Connect an Agent to Exchange EWS MCP v0.8.3
 
 ## 1. Install and verify
 
@@ -13,7 +13,7 @@ cd D:\tools\exchange-ews-mcp
 Expected:
 
 ```text
-version = 0.7.0
+version = 0.8.3
 visible_tool_count = 11
 ```
 
@@ -69,11 +69,11 @@ The Agent should see exactly these 11 tools:
 ```text
 search_mail
 read_mail
+resolve_people
 save_mail_draft
 edit_mail_draft
 continue_action
-get_weekly_report_context
-update_weekly_report
+weekly_report
 read_calendar
 find_meeting_times
 save_meeting
@@ -104,7 +104,7 @@ Run each scenario separately and review the resulting draft or confirmation stat
 Expected safety behavior:
 
 - mail operations create drafts and report `sent=false`;
-- the weekly-report request calls `get_weekly_report_context` before `update_weekly_report`;
+- the weekly-report request calls `weekly_report` and submits changes only through `continue_action`;
 - “项目B没变化” does not create a “no change” slot edit;
 - reporting-period dates are reviewed and updated;
 - choosing save/no at the meeting send decision creates an unsent calendar item instead of returning another pending confirmation;
@@ -113,13 +113,13 @@ Expected safety behavior:
 
 ## 6. Weekly-report Agent requirements
 
-- Call `get_weekly_report_context` for every new user request.
-- Use only the token and slot IDs returned by that call.
-- Compare every historical section included in the prompt.
+- Call `weekly_report` for every new weekly-report user request.
+- Use only the token and short `sN` IDs returned by that call; never invent IDs.
+- Compare the current `slots` with the previous two weeks in `history`.
 - Rewrite conversational input into concise formal report language.
-- Use `location` to distinguish project row, current-week progress, next-week plan, risk, and header/date slots.
+- Use optional `loc` only to understand project row/current-week/next-week/risk/header semantics.
 - Check every date-like slot before update.
-- Submit only `slot_id` and `new_text`.
+- Submit only compact `id` and `text` fields inside weekly `changes[]`.
 - Never generate or return weekly-report HTML.
 
 ## 7. General Agent behavior

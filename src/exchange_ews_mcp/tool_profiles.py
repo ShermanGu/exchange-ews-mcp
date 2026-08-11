@@ -6,11 +6,11 @@ from __future__ import annotations
 PRODUCTION_TOOL_NAMES: tuple[str, ...] = (
     "search_mail",
     "read_mail",
+    "resolve_people",
     "save_mail_draft",
     "edit_mail_draft",
     "continue_action",
-    "get_weekly_report_context",
-    "update_weekly_report",
+    "weekly_report",
     "read_calendar",
     "find_meeting_times",
     "save_meeting",

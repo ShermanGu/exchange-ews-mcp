@@ -21,6 +21,7 @@ from .errors import EwsError
 from .xml_builder import (
     MESSAGES_NS,
     TYPES_NS,
+    AVAILABILITY_ATTENDEE_TYPES,
     SearchCriteria,
     build_create_attachment_request,
     build_create_draft_request,
@@ -53,7 +54,7 @@ ALLOWED_FOLDERS = {
 
 # Public MCP inputs may use EWS distinguished-folder ids, English display names,
 # or localized Outlook labels.  All paths normalize through this table before a
-# request is built, so search_emails and get_weekly_report_context behave identically.
+# request is built, so generic mail search and weekly-report discovery behave identically.
 _FOLDER_ALIASES = {
     "inbox": "inbox",
     "inboxfolder": "inbox",
@@ -1625,8 +1626,12 @@ class EwsClient:
         for raw in attendees:
             email = _validate_addresses([str(raw.get("email") or "")], "attendees")[0]
             attendee_type = str(raw.get("attendee_type") or "Required").strip()
-            if attendee_type not in {"Organizer", "Required", "Optional", "Room", "Resource"}:
-                raise ValueError(f"不支持的 attendee_type：{attendee_type!r}")
+            if attendee_type not in AVAILABILITY_ATTENDEE_TYPES:
+                allowed = ", ".join(sorted(AVAILABILITY_ATTENDEE_TYPES))
+                raise ValueError(
+                    f"不支持的 attendee_type：{attendee_type!r}。仅支持 {allowed}；"
+                    "会议室/资源邮箱忙闲查询未启用。"
+                )
             normalized_attendees.append({"email": email, "attendee_type": attendee_type})
         start_value = _normalize_iso_datetime(start, "start")
         end_value = _normalize_iso_datetime(end, "end")
