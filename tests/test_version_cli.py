@@ -16,7 +16,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def test_version_is_v070() -> None:
-    assert __version__ == "0.7.0"
+    assert __version__ == "0.8.3"
 
 
 def test_version_command_registered() -> None:
@@ -33,8 +33,14 @@ def test_tool_list_reconfigures_cp1252_stdio_to_utf8() -> None:
     )
     env["PYTHONIOENCODING"] = "cp1252"
 
+    bootstrap = (
+        "import runpy,sys; "
+        "runpy.run_path('tests/conftest.py'); "
+        "sys.argv=['exchange-ews-mcp','tool-list']; "
+        "runpy.run_module('exchange_ews_mcp.cli', run_name='__main__')"
+    )
     result = subprocess.run(
-        [sys.executable, "-m", "exchange_ews_mcp.cli", "tool-list"],
+        [sys.executable, "-c", bootstrap],
         cwd=ROOT,
         env=env,
         capture_output=True,

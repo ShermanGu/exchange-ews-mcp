@@ -1,4 +1,4 @@
-# Fresh install and upgrade — v0.7.0
+# Fresh install and upgrade — v0.8.3
 
 ## Clean installation
 
@@ -18,7 +18,7 @@ Verify:
 Expected:
 
 ```text
-version = 0.7.0
+version = 0.8.3
 visible_tool_count = 11
 ```
 
@@ -40,7 +40,7 @@ Configure allowed attachment roots and calendar preferences as needed.
 1. Keep the existing Windows user profile and Credential Manager entries.
 2. Replace or update the repository files.
 3. Run `install.cmd` from the new repository.
-4. Confirm both module and metadata versions are `0.7.0`.
+4. Confirm both module and metadata versions are `0.8.3`.
 5. Regenerate the MCP configuration.
 6. Completely restart the MCP client.
 7. Verify that 11 production tools are visible.
@@ -90,13 +90,13 @@ Use a short human-style request such as:
 
 Confirm:
 
-- the Agent calls `get_weekly_report_context` first;
-- the returned slots are compact;
-- the Agent uses the complete prompt and location strings;
+- the Agent calls `weekly_report` first;
+- the returned slots use short `sN` IDs and compact optional `loc` hints;
+- only the previous two weeks appear in `history`;
 - project B is not changed;
 - reporting-period dates are updated;
-- the second call uses the new one-time token;
-- the result is one unsent Reply All draft;
+- the second call is `continue_action` with the same context-bound `resume_token` and compact `id/text` changes;
+- the result is one unsent Reply All or fresh Compose draft, selected server-side;
 - table structure, styles, images, and native history remain intact.
 
 ## Recovery

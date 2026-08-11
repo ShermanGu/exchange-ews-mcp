@@ -54,6 +54,9 @@ jobs:
           exchange-ews-mcp tool-list
           exchange-ews-mcp tool-list --profile debug
 
+      - name: Verify repository release contract
+        run: python scripts/release_check.py --skip-tests --skip-build
+
   package:
     name: Build distributions
     runs-on: windows-latest
@@ -72,6 +75,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip build
           python -m build
+          python -c "from pathlib import Path; from scripts.release_check import write_sha256_manifest; write_sha256_manifest(Path('dist'))"
 
       - name: Install wheel in a clean environment
         shell: pwsh
@@ -82,9 +86,10 @@ jobs:
           .\.package-check\Scripts\python.exe -m pip install $wheel.FullName
           .\.package-check\Scripts\exchange-ews-mcp.exe version
           .\.package-check\Scripts\exchange-ews-mcp.exe tool-list
+          .\.package-check\Scripts\exchange-ews-mcp.exe tool-list --profile debug
 
       - name: Upload distributions
         uses: actions/upload-artifact@v7
         with:
-          name: exchange-ews-mcp-v0.7.0-distributions
+          name: exchange-ews-mcp-v0.8.3-distributions
           path: dist/*

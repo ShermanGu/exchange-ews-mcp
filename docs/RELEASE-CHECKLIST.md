@@ -1,13 +1,13 @@
-# v0.7.0 release checklist
+# v0.8.3 release checklist
 
-This checklist defines the final repository and package gate for Exchange EWS MCP v0.7.0.
+This checklist defines the final repository and package gate for Exchange EWS MCP v0.8.3.
 
 ## Repository contract
 
-- [ ] `src/exchange_ews_mcp/__init__.py` reports `0.7.0`.
+- [ ] `src/exchange_ews_mcp/__init__.py` reports `0.8.3`.
 - [ ] Production and debug profiles expose 11 and 17 tools respectively.
 - [ ] English and Simplified Chinese README files describe the same supported release.
-- [ ] `AGENT-CONNECTION.md` and `AGENT-TOOLS.md` include both weekly-report tools.
+- [ ] `AGENT-CONNECTION.md` and `AGENT-TOOLS.md` document `weekly_report` followed by `continue_action`.
 - [ ] CI covers Python 3.10–3.13 on Windows and builds distributions.
 - [ ] No credentials, mailbox data, local state databases, or generated virtual environments are committed.
 
@@ -19,7 +19,7 @@ Run:
 .\run-release-check.cmd
 ```
 
-This performs repository checks, strict UT, `compileall`, and distribution build. The wrapper first uses the current shell `python` when `python -m pytest` is available, then falls back to a pytest-enabled project virtual environment or `py -3`. The checker uses the same interpreter for package building and explicitly disables build isolation, which is safer for corporate and offline indexes. Before release validation, install the full local toolchain with `python -m pip install -e ".[dev]"`. The strict UT environment disables unrelated globally installed pytest plugins and treats warnings as errors.
+This performs repository checks, strict UT, `compileall`, distribution build, and writes `dist/SHA256SUMS.txt`. The wrapper first uses the current shell `python` when `python -m pytest` is available, then falls back to a pytest-enabled project virtual environment or `py -3`. The checker uses the same interpreter for package building and explicitly disables build isolation, which is safer for corporate and offline indexes. Before release validation, install the full local toolchain with `python -m pip install -e ".[dev]"`. The strict UT environment disables unrelated globally installed pytest plugins and treats warnings as errors.
 
 ## Live Exchange DT
 
@@ -41,11 +41,11 @@ Then run the full DT only after reviewing the configured recipients and subject 
 .\run-dt-tests.cmd --full
 ```
 
-Full DT can create unsent mail, reply, forward, weekly-report Reply All, and meeting drafts. It does not send mail; meeting invitation sending remains separately confirmed by the workflow under test. Review and remove generated drafts after the run.
+Full DT can create unsent mail, reply, forward, weekly-report Reply All/Compose, and meeting drafts. It does not send mail; meeting invitation sending remains separately confirmed by the workflow under test. Review and remove generated drafts after the run.
 
 ## Artifact review
 
 - [ ] Install the built wheel into a clean Windows virtual environment.
 - [ ] Run `exchange-ews-mcp version` and both production/debug `tool-list` commands.
-- [ ] Inspect `RELEASE-AUDIT.md` and `SHA256SUMS.txt`.
-- [ ] Tag the exact commit as `v0.7.0` only after all environment-owned live DT checks pass.
+- [ ] Inspect `RELEASE-AUDIT.md` and generated `dist/SHA256SUMS.txt`.
+- [ ] Tag the exact commit as `v0.8.3` only after all environment-owned live DT checks pass.

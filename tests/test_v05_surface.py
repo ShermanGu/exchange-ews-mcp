@@ -20,15 +20,16 @@ def test_production_server_exposes_compact_11_tools() -> None:
     assert len(names) == 11
     assert names == PRODUCTION_TOOL_NAMES
     assert {
-        "search_mail", "read_mail", "save_mail_draft", "edit_mail_draft",
-        "continue_action", "get_weekly_report_context", "update_weekly_report",
+        "search_mail", "read_mail", "resolve_people", "save_mail_draft", "edit_mail_draft",
+        "continue_action", "weekly_report",
         "read_calendar", "find_meeting_times", "save_meeting",
         "send_meeting_invitation",
     } <= set(names)
     assert {
         "resolve_names", "create_draft", "reply_as_draft", "forward_as_draft",
-        "update_draft", "create_meeting", "get_current_user", "resolve_people",
+        "update_draft", "create_meeting", "get_current_user",
         "compose_email", "find_email", "update_meeting", "schedule_meeting",
+        "get_weekly_report_context", "update_weekly_report",
     }.isdisjoint(names)
 
 

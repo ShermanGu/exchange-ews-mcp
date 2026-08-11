@@ -1,15 +1,15 @@
-# Exchange EWS MCP v0.6.16 — Final Release Audit
+# Exchange EWS MCP v0.8.3 — Release Audit
 
-Audit date: **2026-08-07**
+Audit date: **2026-08-11**
 
-This document records deterministic validation completed for the repository-ready v0.6.16 release. The target environment is Windows with Python 3.10–3.13 and an on-premises Exchange EWS endpoint using NTLM.
+This document records the repository-level release validation for Exchange EWS MCP v0.8.3. The primary target is Windows with Python 3.10–3.13 and an on-premises Exchange EWS endpoint using NTLM. Live Exchange DT remains an environment-owned release gate and must be run from the maintainer's configured Windows environment against the exact release candidate before tagging.
 
 ## Release identity
 
 - Package: `exchange-ews-mcp`
-- Module and wheel metadata version: `0.6.16`
-- Production tool profile: **21** tools
-- Debug tool profile: **27** tools
+- Module / distribution version: `0.8.3`
+- Production tool profile: **11** tools
+- Debug tool profile: **17** tools
 - Unified DT groups: **5**
   - `atomic`
   - `workflow-v03`
@@ -17,94 +17,137 @@ This document records deterministic validation completed for the repository-read
   - `calendar-v05`
   - `weekly-report-v06`
 
-## v0.6.16 fixes
+The historical `weekly-report-v06` DT group name is intentionally retained for compatibility; it exercises the current v0.8.3 `weekly_report → continue_action` route.
 
-This release addresses two failures observed against the real Agent workflow:
+## v0.8.3 weekly-report contract
 
-1. An Agent could pass a `calendar_ref` to `update_email_draft`, which correctly failed the reference-kind guard but surfaced as a tool execution error.
-2. `update_meeting` treated Exchange `IsMeeting=false` as conclusive and rejected an unsent CalendarItem even when attendee data showed that it was a meeting.
+The Agent-facing weekly-report workflow is intentionally compact:
 
-The release changes are:
+1. `weekly_report` is the only weekly-report entry tool.
+2. The result contains only the context needed by the Agent: `resume_token`, server-selected `mode`, default draft `subject`, current user `request`, short local `slots`, and at most the previous two reports in `history`.
+3. Public slot IDs are local ordinals (`s1`, `s2`, ...). Long internal IDs, HTML offsets, hashes and Exchange identifiers remain server-side.
+4. The Agent submits only changed `id/text` pairs through generic `continue_action`.
+5. Local payload validation errors do not consume the token. The one-shot claim begins only after deterministic preflight succeeds and the workflow reaches the write boundary.
+6. The Server automatically advances supported Subject date/week markers by one week. `selections.subject` is only an explicit user override.
+7. Weekly history is three weeks total: the newest report is represented by editable `slots`; `history` contains at most the previous two reports.
+8. Reply-history detection uses the first visible `发件人` or standalone `From` marker and HTML nesting depth rather than an Outlook separator whitelist.
+9. If the newest report contains quoted history, the draft is created as native Reply All. Otherwise the workflow creates a fresh Compose draft and copies the source To/CC server-side.
+10. The Agent never owns HTML. Text replacement remains deterministic and HTML structure is revalidated before the Exchange write.
 
-- accidental `update_email_draft(draft_ref=cal_...)` calls now return a non-mutating structured response with `recommended_tool=update_meeting` instead of attempting a write or raising the generic kind error;
-- meeting results now expose `reference_kind=calendar`, `update_tool=update_meeting`, and `send_tool=send_meeting_invitation` to make subsequent Agent routing explicit;
-- calendar references now retain meeting provenance, attendee addresses, send state, and the current ChangeKey;
-- `update_meeting` and `send_meeting_invitation` classify an item using attendee collections and MCP reference provenance in addition to Exchange `IsMeeting`;
-- a true appointment with no attendees is still rejected;
-- existing v0.6.15 `cal_` references remain usable when Exchange returns the attendee collections;
-- no OWA URL or additional user configuration was added.
+## Compact tool surface
 
-Microsoft defines a CalendarItem with attendees as a meeting, while `IsMeeting` indicates meeting versus appointment. The implementation therefore treats attendee collections as corroborating evidence when an on-premises server returns an inconsistent flag.
+Production exposes exactly:
+
+```text
+search_mail
+read_mail
+resolve_people
+save_mail_draft
+edit_mail_draft
+continue_action
+weekly_report
+read_calendar
+find_meeting_times
+save_meeting
+send_meeting_invitation
+```
+
+Debug adds six low-level primitives:
+
+```text
+resolve_names
+create_draft
+reply_as_draft
+forward_as_draft
+update_draft
+create_meeting
+```
+
+Room/Resource attendee semantics are not advertised or supported by the compact calendar workflow. `resolve_people` remains independently visible because identity disambiguation is shared across workflows.
 
 ## Deterministic validation
 
-Strict unit suite:
+The final release candidate must pass:
 
 ```text
 PYTEST_DISABLE_PLUGIN_AUTOLOAD=1
-PYTHONWARNINGS=error
-python -m pytest -q -W error::ResourceWarning
-210 passed
+python -m pytest -W error::ResourceWarning
 ```
 
-Coverage added for v0.6.16 includes:
+Expected result for this source tree:
 
-- `IsMeeting=false` plus retained attendees is accepted as an unsent meeting;
-- `IsMeeting=false` with no attendees remains rejected;
-- a calendar reference passed to `update_email_draft` produces a safe route hint and performs no EWS call;
-- saved meeting results declare the exact update/send tools;
-- enriched reference metadata is persisted for later update/send operations;
-- CLI tool-profile JSON remains printable when the inherited Windows stream encoding is CP1252.
+```text
+228 passed
+```
 
-Compilation check:
+Additional release checks:
 
 ```text
 python -m compileall -q src tests scripts
-passed
+scripts/release_check.py static repository contract
+package build without PEP 517 isolation
+clean extraction / re-test of the final source archive
 ```
 
-Repository release contract:
+The release checker also writes `dist/SHA256SUMS.txt` for the generated distributions.
+
+## CI contract
+
+GitHub Actions:
+
+- runs strict unit tests on Windows for Python 3.10, 3.11, 3.12 and 3.13;
+- prints package version and Production/Debug tool profiles;
+- builds distributions;
+- installs the wheel in a clean virtual environment and checks its CLI;
+- uploads the artifacts as `exchange-ews-mcp-v0.8.3-distributions`.
+
+## Final artifact validation
+
+The final release distributions were rebuilt from the exact v0.8.3 package source on Windows with Python 3.12 and a no-build-isolation PEP 517 build. They were then validated for metadata/source parity.
 
 ```text
-v0.6.16
-21 Production tools
-27 Debug tools
-5 DT groups
-passed
+exchange_ews_mcp-0.8.3-py3-none-any.whl
+SHA-256: 7473e4822aa2dc43651e871a582f857287da4237560a05aca03fbbf92e26bd32
+
+exchange_ews_mcp-0.8.3.tar.gz
+SHA-256: 50baf2ad08ae23875509f65617f8c067c4f3064fe924b4cc3183befdf1851aac
 ```
 
-## Distribution validation
+Wheel metadata validation:
 
-Wheel built from the final source tree:
+- `Name: exchange-ews-mcp`
+- `Version: 0.8.3`
+- `Requires-Python: >=3.10`
+- `License-Expression: MIT`
+- all declared runtime dependencies are present in wheel metadata;
+- all **22** packaged `exchange_ews_mcp/*.py` files are byte-for-byte identical to the final source tree;
+- direct import from the wheel reports v0.8.3, 11 Production tools and 17 Debug tools.
+
+Local validation imported the built wheel directly in the existing Windows release environment and confirmed v0.8.3 plus both tool profiles. The GitHub Actions package job remains the required dependency-resolving clean-install gate: it installs the wheel with dependencies in a new Windows virtual environment and validates the version and both tool profiles.
+
+## Live Exchange DT gate
+
+Live EWS tests are intentionally not run by the repository build container because they require Windows Credential Manager state, a reachable company EWS endpoint and approved test recipients.
+
+Before creating tag `v0.8.3`, run against the exact release candidate:
+
+```powershell
+.\run-dt-tests.cmd
+.\run-dt-tests.cmd --full
+```
+
+Review generated mail/weekly-report drafts and calendar cleanup, then confirm there are no unexpected sends or mutations. See [DT.md](DT.md) for the per-group contract and cleanup guidance.
+
+## Distribution integrity
+
+`run-release-check.cmd` builds both wheel and sdist when the `build` frontend is available; its supported offline fallback builds the wheel only. In either case it writes SHA-256 hashes for the generated artifacts to:
 
 ```text
-exchange_ews_mcp-0.6.16-py3-none-any.whl
-SHA-256: 218c3c93640c8bfcf4baaf41bbbe287d13e5cb7480b4f3edb9f1edca4226666c
+dist/SHA256SUMS.txt
 ```
 
-Validation performed:
+The checksum file is generated from the exact built artifacts, so hashes should be taken from the final candidate rather than copied between builds.
 
-- clean GitHub-ready source tree: **210 passed**;
-- wheel module version: `0.6.16`;
-- wheel metadata version: `0.6.16`;
-- `Requires-Python: >=3.10` present;
-- all **23** packaged Python files are byte-for-byte identical to the final source tree;
-- the full strict **210-test** suite passes while importing `exchange_ews_mcp` from the extracted wheel rather than repository `src`;
-- Production and Debug tool counts from wheel code are 21 and 27.
+## Release decision
 
-The build used the selected interpreter and disabled PEP 517 isolation. In this container the `build` frontend was unavailable, so the supported `pip wheel --no-build-isolation` fallback was used.
-
-## Live Exchange DT status
-
-**Not executed in this build container.** Live validation requires the maintainer's Windows Credential Manager entry, reachable company EWS endpoint, test mailbox, and approved recipients.
-
-The deterministic suite validates routing, parsing, reference handling, XML generation, ChangeKey refresh, update behavior, and send confirmation. It does not claim that this patch has already been exercised against the user's real Exchange server.
-
-Recommended target-environment verification:
-
-1. upgrade to v0.6.16 without deleting the existing state database;
-2. call `get_calendar_item` with the existing `cal_...` reference and verify attendees are returned;
-3. call `update_meeting(calendar_ref=..., body_html=...)` and confirm `meeting_updated_not_sent`;
-4. inspect the item in Outlook;
-5. call `send_meeting_invitation(..., confirm_send=true)` only after manual confirmation;
-6. verify attendees receive exactly one invitation.
+Repository-level release readiness is **PASS** only when the deterministic gate is green and the generated archive is re-tested from a clean extraction. Final tagging remains contingent on the maintainer completing the live Exchange DT gate against the same v0.8.3 source candidate.

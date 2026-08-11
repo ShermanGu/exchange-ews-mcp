@@ -68,7 +68,7 @@ def test_scripted_pytest_invocations_use_python_module_mode() -> None:
 
 
 def test_public_docs_match_tool_and_workflow_contract() -> None:
-    assert __version__ == "0.7.0"
+    assert __version__ == "0.8.3"
     assert len(tool_names()) == 11
     assert len(tool_names(include_debug_tools=True)) == 17
     assert VALID_GROUPS == (
@@ -80,9 +80,9 @@ def test_public_docs_match_tool_and_workflow_contract() -> None:
     )
     for name in ("README.md", "README.zh-CN.md", "docs/AGENT-CONNECTION.md", "docs/AGENT-TOOLS.md"):
         text = read(name)
-        assert "0.7.0" in text
-        assert "get_weekly_report_context" in text
-        assert "update_weekly_report" in text
+        assert "0.8.3" in text
+        assert "weekly_report" in text
+        assert "continue_action" in text
         assert "save_meeting" in text
         assert "send_meeting_invitation" in text
 
@@ -97,7 +97,9 @@ def test_ci_runs_supported_windows_matrix_and_package_build() -> None:
     assert 'PYTHONWARNINGS: "error"' not in workflow
     assert "error::ResourceWarning" in workflow
     assert "python -m build" in workflow
-    assert "tool-list --profile debug" in workflow
+    assert "write_sha256_manifest" in workflow
+    assert "python scripts/release_check.py --skip-tests --skip-build" in workflow
+    assert workflow.count("tool-list --profile debug") >= 2
 
 
 def test_release_scripts_use_strict_unit_suite_and_keep_live_dt_explicit() -> None:
@@ -138,8 +140,9 @@ def test_user_facing_docs_have_no_wrong_current_tool_counts() -> None:
     )
     for name in current_docs:
         text = read(name)
-        assert "Production profile: 18" not in text
-        assert "visible_tool_count = 18" not in text
+        assert "Production profile: 12" not in text
+        assert "visible_tool_count = 12" not in text
+        assert "for 18 visible tools" not in text
         assert "all 23 tools" not in text
         assert "完整 23" not in text
 
@@ -180,3 +183,45 @@ def test_release_checker_build_module_branch_disables_isolation(
         "--outdir",
         str(output_dir),
     ]]
+
+
+def test_release_docs_and_ci_artifact_match_current_version() -> None:
+    ci = read(".github/workflows/ci.yml")
+    audit = read("docs/RELEASE-AUDIT.md")
+    assert f"exchange-ews-mcp-v{__version__}-distributions" in ci
+    assert f"v{__version__}" in audit
+    assert f"Production tool profile: **{len(tool_names())}** tools" in audit
+    assert f"Debug tool profile: **{len(tool_names(include_debug_tools=True))}** tools" in audit
+    assert "v0.6.16" not in audit
+
+
+def test_release_check_generates_checksum_manifest() -> None:
+    checker = read("scripts/release_check.py")
+    checklist = read("docs/RELEASE-CHECKLIST.md")
+    assert "write_sha256_manifest" in checker
+    assert "SHA256SUMS.txt" in checker
+    assert "dist/SHA256SUMS.txt" in checklist
+
+
+def test_checksum_manifest_accepts_relative_output_dir(
+    monkeypatch, tmp_path: Path, capsys
+) -> None:
+    import importlib.util
+
+    script_path = ROOT / "scripts" / "release_check.py"
+    spec = importlib.util.spec_from_file_location("release_check_checksum_test", script_path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    monkeypatch.chdir(tmp_path)
+    output_dir = Path("dist")
+    output_dir.mkdir()
+    (output_dir / "package.whl").write_bytes(b"wheel")
+
+    manifest = module.write_sha256_manifest(output_dir)
+
+    assert manifest == Path("dist") / "SHA256SUMS.txt"
+    assert manifest.is_file()
+    assert manifest.read_text(encoding="utf-8").endswith("  package.whl\n")
+    assert "Wrote checksum manifest:" in capsys.readouterr().out

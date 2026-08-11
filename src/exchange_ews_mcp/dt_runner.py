@@ -951,13 +951,15 @@ def run_weekly_report_v06_integration_tests(
     store: ReferenceStore,
     stamp: str,
 ) -> dict[str, Any]:
-    """Validate the v0.6 weekly-report context/update chain without sending mail.
+    """Validate the weekly_report -> continue_action chain without sending mail.
 
+    The historical group name stays ``weekly-report-v06`` for CLI compatibility.
     A subject filter is required because weekly-report extraction must target a
-    known report family. Read-only mode validates search, extraction, slots,
-    compact locations, the full Agent prompt, and the one-time token. Full mode
-    additionally creates one native Reply All draft using an unchanged slot and
-    the existing subject; it never sends the draft.
+    known report family. Read-only mode validates search, top-body extraction,
+    aggregation, compact slots, the Agent prompt, and the one-time resume token.
+    Full mode consumes that token through ``continue_action`` and creates exactly
+    one unsent draft. The workflow itself decides Reply All versus Compose from
+    whether the latest source body contains a quoted-history sender header.
     """
     steps: list[dict[str, Any]] = []
     created_drafts: list[dict[str, Any]] = []
@@ -998,36 +1000,35 @@ def run_weekly_report_v06_integration_tests(
     else:
         def get_context() -> dict[str, Any]:
             result = workflow.get_weekly_report_context(
-                user_input=f"{stamp} DT：验证周报上下文与 Reply All 草稿链路。",
+                user_input=f"{stamp} DT：验证 weekly_report 与 continue_action 草稿链路。",
                 subject_contains=profile.subject_contains,
                 folders=["sentitems"],
                 lookback_days=365,
-                max_reports=5,
+                max_reports=3,
             )
-            if result.get("status") != "context_ready":
-                raise RuntimeError(f"周报上下文状态异常：{result.get('status')}")
-            token = str(result.get("weekly_flow_token") or "")
-            slots = list(result.get("editable_slots") or [])
-            prompt = str(result.get("agent_prompt") or "")
+            token = str(result.get("resume_token") or "")
+            slots = list(result.get("slots") or [])
+            history = list(result.get("history") or [])
             if not token.startswith("weeklyflow_"):
-                raise RuntimeError("未返回 weeklyflow_ 一次性 token。")
+                raise RuntimeError("weekly_report 未返回 weeklyflow_ resume_token。")
             if not slots:
                 raise RuntimeError("未返回可编辑周报槽位。")
-            if any(set(item) - {"slot_id", "text", "location"} for item in slots):
+            if any(set(item) - {"id", "text", "loc"} for item in slots):
                 raise RuntimeError("Production 周报槽位包含非紧凑字段。")
-            if "【日期硬校验】" not in prompt or "【周报化改写要求】" not in prompt:
-                raise RuntimeError("Agent Prompt 缺少日期硬校验或周报化改写规则。")
+            expected_ids = [f"s{i}" for i in range(1, len(slots) + 1)]
+            if [str(item.get("id") or "") for item in slots] != expected_ids:
+                raise RuntimeError("Production 周报短 slot id 不连续或不稳定。")
+            if len(history) > 2:
+                raise RuntimeError("Production 周报 history 超过前两周。")
             context_holder.update(result)
             return {
-                "source_subject": result.get("source_subject"),
-                "report_count": result.get("report_count"),
-                "editable_slot_count": result.get("editable_slot_count"),
-                "response_profile": result.get("response_profile"),
+                "source_subject": result.get("subject"),
+                "report_count": 1 + len(history),
+                "editable_slot_count": len(slots),
+                "response_profile": "compact_json_v3",
                 "token_prefix": token.split("_", 1)[0],
-                "prompt_chars": len(prompt),
-                "locations_present": sum(item.get("location") is not None for item in slots),
-                "draft_created": result.get("draft_created"),
-                "sent": result.get("sent"),
+                "locations_present": sum(item.get("loc") is not None for item in slots),
+                "mode": result.get("mode"),
             }
 
         context_result = run_step("weekly_report_context", get_context)
@@ -1035,35 +1036,47 @@ def run_weekly_report_v06_integration_tests(
         if read_only:
             steps.append(
                 {
-                    "name": "weekly_report_reply_all_draft",
+                    "name": "weekly_report_continue_action_draft",
                     "status": "SKIP",
-                    "details": "read_only=true；未创建周报 Reply All 草稿。",
+                    "details": "read_only=true；未通过 continue_action 创建周报草稿。",
                 }
             )
         elif context_result is not None:
-            def create_reply_all_draft() -> dict[str, Any]:
-                slots = list(context_holder.get("editable_slots") or [])
+            def create_weekly_draft_via_continue_action() -> dict[str, Any]:
+                slots = list(context_holder.get("slots") or [])
                 first = slots[0]
-                result = workflow.update_weekly_report(
-                    weekly_flow_token=str(context_holder["weekly_flow_token"]),
-                    changes=[
-                        {
-                            "slot_id": str(first["slot_id"]),
-                            "new_text": str(first["text"]),
-                        }
-                    ],
-                    subject=str(context_holder.get("source_subject") or profile.subject_contains),
+                result = workflow.continue_action(
+                    resume_token=str(context_holder["resume_token"]),
+                    selections={
+                        "changes": [
+                            {
+                                "id": str(first["id"]),
+                                "text": str(first["text"]),
+                            }
+                        ],
+                        "subject": str(
+                            context_holder.get("subject") or profile.subject_contains
+                        ),
+                    },
                 )
                 if result.get("status") != "draft_created":
-                    raise RuntimeError(f"周报 update 未创建草稿：{result.get('status')}")
-                if result.get("sent") is not False or result.get("reply_all") is not True:
-                    raise RuntimeError("周报 DT 草稿不是未发送的 Reply All。")
+                    raise RuntimeError(
+                        f"周报 continue_action 未创建草稿：{result.get('status')}"
+                    )
+                draft_mode = str(result.get("draft_mode") or "")
+                if draft_mode not in {"reply_all", "compose"}:
+                    raise RuntimeError(f"周报 DT 返回未知 draft_mode：{draft_mode!r}")
+                if result.get("sent") is not False:
+                    raise RuntimeError("周报 DT 不允许发送邮件。")
+                if result.get("reply_all") is not (draft_mode == "reply_all"):
+                    raise RuntimeError("周报 DT 的 reply_all 标志与自动 draft_mode 不一致。")
                 if result.get("body_update_after_reply") is not False:
-                    raise RuntimeError("周报 DT 意外在 Reply All 后二次覆盖 Body。")
+                    raise RuntimeError("周报 DT 意外在草稿创建后二次覆盖 Body。")
                 draft = dict(result.get("draft") or {})
                 created_drafts.append(
                     {
-                        "draft_type": "weekly_report_reply_all",
+                        "draft_type": f"weekly_report_{draft_mode}",
+                        "draft_mode": draft_mode,
                         "draft_ref": result.get("draft_ref"),
                         "item_id": draft.get("item_id"),
                         "subject": draft.get("subject"),
@@ -1071,6 +1084,7 @@ def run_weekly_report_v06_integration_tests(
                 )
                 return {
                     "draft_ref": result.get("draft_ref"),
+                    "draft_mode": draft_mode,
                     "subject": draft.get("subject"),
                     "reply_all": result.get("reply_all"),
                     "sent": result.get("sent"),
@@ -1082,7 +1096,7 @@ def run_weekly_report_v06_integration_tests(
                     ),
                 }
 
-            run_step("weekly_report_reply_all_draft", create_reply_all_draft)
+            run_step("weekly_report_continue_action_draft", create_weekly_draft_via_continue_action)
 
     passed = sum(step["status"] == "PASS" for step in steps)
     failed = sum(step["status"] == "FAIL" for step in steps)
@@ -1117,7 +1131,7 @@ def run_dt_suite(
       - workflow-v03: v0.3 workflow primitives
       - semantic-mail-v04: v0.4 semantic mail workflow
       - calendar-v05: v0.5 calendar coordination
-      - weekly-report-v06: v0.6 weekly-report context and Reply All draft
+      - weekly-report-v06: weekly_report context and continue_action draft
 
     Future releases can append new groups without creating new DT commands.
     """
@@ -1292,7 +1306,7 @@ def run_dt_suite(
             "v0.3 Workflow Primitives DT 验证人员解析、增强搜索、引用句柄和草稿更新。",
             "v0.4 Semantic Mail Workflow DT 验证历史往来消歧、语义邮件定位和高层草稿创建。",
             "v0.5 Calendar Coordination DT 验证忙闲、工作时间、共同空闲和 SendToNone 会议保存。",
-            "v0.6 Weekly Report DT 验证五周上下文、紧凑槽位、完整 Prompt、一次性 token 和未发送 Reply All 草稿。",
+            "Weekly Report DT 验证三周紧凑上下文、短 slot id、一次性 token 和未发送草稿。",
             "邮件写操作只创建或修改 SaveOnly 草稿；日历 DT 只保存 SendToNone 测试会议并自动删除，不会发送邀请。",
         ],
     }

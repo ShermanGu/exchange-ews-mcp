@@ -1,4 +1,4 @@
-# Architecture — Exchange EWS MCP v0.7.0
+# Architecture — Exchange EWS MCP v0.8.3
 
 ## Design goals
 
@@ -74,20 +74,22 @@ Key properties:
 The weekly-report workflow intentionally separates understanding from deterministic editing:
 
 ```text
-get_weekly_report_context
+weekly_report
         ↓
-compact text slots + full Agent instructions + single-use token
+compact short-ID slots + previous-two-week history + context-bound resume_token
         ↓
-Agent selects slot_id and produces polished new_text
+Agent selects short id (sN) and produces polished text
         ↓
-update_weekly_report
+continue_action
+        ↓
+internal weekly_report_update primitive
         ↓
 server inserts escaped text into stored HTML and validates structure
         ↓
-native Reply All draft
+unsent Reply All or fresh Compose draft
 ```
 
-The Agent never receives the source HTML. Layout analysis is advisory only and is compressed into one nullable `location` string per slot. Actual writes use the server-side slot manifest and stored template.
+The Agent never receives the source HTML. Layout analysis is advisory only and is compressed into one optional `loc` string per slot. Actual writes use the server-side slot manifest and stored template.
 
 See [WEEKLY-REPORT.md](WEEKLY-REPORT.md).
 
@@ -110,7 +112,7 @@ Safety rules:
 
 ### Production profile
 
-The production profile exposes 11 compact workflow tools. Overlapping read primitives, recipient resolution, and draft/calendar mutations are consolidated behind semantic mail and calendar facades. The underlying service and CLI primitives remain available for deterministic testing and maintenance without entering the Agent context.
+The production profile exposes 11 compact workflow tools. Low-level reads and draft/calendar mutations are consolidated behind semantic facades, while `resolve_people` remains independently visible because identity disambiguation is shared across mail, calendar, weekly-report, and future workflows. The underlying service and CLI primitives remain available for deterministic testing and maintenance without entering the Agent context.
 
 ### Debug profile
 

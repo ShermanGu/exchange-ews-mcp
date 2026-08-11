@@ -1,102 +1,63 @@
-# Agent tool surface — v0.7.0
+# Agent tool surface — v0.8.3
 
-Normal Agents use the compact **production** stdio server. The debug server is reserved for deterministic EWS troubleshooting and development tests.
+Normal Agents use the compact production stdio server. The debug server is reserved for deterministic EWS troubleshooting and DT.
 
 ## Production profile: 11 tools
 
-### Mail
-
 | Tool | Purpose | Write behavior |
 | --- | --- | --- |
-| `search_mail` | List or search inbox/sent mail, resolve people, and return stable `message_ref` values. | Read-only |
-| `read_mail` | Read a message or draft through `message_ref`/`draft_ref`. | Read-only |
-| `save_mail_draft` | Create, reply, Reply All, or forward according to `mode`. | Draft only |
-| `edit_mail_draft` | Modify a draft and optionally append prevalidated local attachments. | Draft only |
-| `continue_action` | Resume a pending person, message, time, or confirmation selection. | Depends on the stored action; never sends email |
+| `search_mail` | List/search mail and return typed opaque refs. | Read-only |
+| `read_mail` | Read a message or draft by opaque ref. | Read-only |
+| `resolve_people` | Resolve a name/email independently with ambiguity handling. | Read-only |
+| `save_mail_draft` | Compose, reply, Reply All, or forward by `mode`. | Draft only |
+| `edit_mail_draft` | Edit a draft and append validated attachments. | Draft only |
+| `continue_action` | Resume workflow-owned ambiguity/confirmation and submit weekly-report slot changes. | Stored-action dependent; never sends mail |
+| `weekly_report` | The only weekly-report entry. Returns compact short-ID slots + previous-two-week history + a context-bound `resume_token`; creates no draft. | Read-only |
+| `read_calendar` | List a time window or read one calendar item. | Read-only |
+| `find_meeting_times` | Resolve attendees and find common free time. | Read-only |
+| `save_meeting` | Create/update an unsent meeting. | `SendToNone` |
+| `send_meeting_invitation` | Send a saved meeting only with explicit confirmation. | Sends invitation |
 
-`search_mail` replaces the old list/search/find split. With no filters it returns recent mail; people are resolved inside the workflow. `save_mail_draft` accepts `compose`, `reply`, `reply_all`, or `forward`. Reply and forward require a `source_message_ref`, so search and selection happen before any draft write.
-
-### Weekly reports
-
-| Tool | Purpose | Write behavior |
-| --- | --- | --- |
-| `get_weekly_report_context` | Mandatory first step for each new request. Returns compact text slots, full Agent instructions, history, and a single-use token. | Read-only Exchange access |
-| `update_weekly_report` | Mandatory second step. Consumes the token, updates selected server-owned HTML text slots, validates structure, and creates a native Reply All draft. | Draft only |
-
-The weekly-report two-step contract is unchanged from v0.6.16.
-
-### Calendar
-
-| Tool | Purpose | Write behavior |
-| --- | --- | --- |
-| `read_calendar` | List a time window or read one item through `calendar_ref`. | Read-only |
-| `find_meeting_times` | Resolve attendees and return common free slots plus availability details. | Read-only |
-| `save_meeting` | Create or update a meeting at an exact time. It always keeps invitations unsent. | `SendToNone` |
-| `send_meeting_invitation` | Send an existing unsent meeting only after `confirm_send=true`. | `SendToAllAndSaveCopy` |
-
-Use `find_meeting_times` before `save_meeting` when the user has not selected an exact start/end. `save_meeting` never sends. Sending remains a separate, explicit tool boundary.
-
-## Debug-only tools
-
-The debug server adds six low-level write primitives:
-
-```text
-resolve_names
-create_draft
-reply_as_draft
-forward_as_draft
-update_draft
-create_meeting
-```
-
-They bypass parts of the compact semantic facade and should not be visible to normal Agents.
+The debug profile adds six low-level primitives: `resolve_names`, `create_draft`, `reply_as_draft`, `forward_as_draft`, `update_draft`, and `create_meeting`, for 17 visible tools total.
 
 ## Recommended routing
 
 ```text
-List or find mail                   → search_mail
-Read a selected message            → read_mail(message_ref=...)
-Create a new draft                 → save_mail_draft(mode=compose)
-Reply or Reply All                 → search_mail → save_mail_draft(mode=reply/reply_all)
-Forward a message                  → search_mail → save_mail_draft(mode=forward)
-Modify draft / add attachments     → edit_mail_draft
-Resolve an ambiguity               → continue_action
-Update a weekly report             → get_weekly_report_context → update_weekly_report
-List or read calendar items        → read_calendar
-Find common meeting time           → find_meeting_times
-Create a meeting without sending   → save_meeting
-Update an unsent meeting           → save_meeting(calendar_ref=...)
-Send a saved meeting invitation    → send_meeting_invitation(calendar_ref=..., confirm_send=true)
+Mail search/read                  → search_mail / read_mail
+Independent identity resolution  → resolve_people
+Mail draft create/reply/forward  → save_mail_draft
+Draft edit/attachments           → edit_mail_draft
+Workflow continuation            → continue_action
+Weekly report                    → weekly_report → continue_action
+Calendar read                    → read_calendar
+Find meeting time                → find_meeting_times
+Create/update unsent meeting     → save_meeting
+Send saved invitation            → send_meeting_invitation
 ```
 
-## Weekly-report routing contract
+## Weekly-report contract
 
-For every new user update, the Agent must call `get_weekly_report_context`, even when an older token is visible in the current conversation.
+For every new weekly-report request call `weekly_report`. The tool reads three weeks total and returns compact Agent-safe JSON only: `resume_token`, server-selected `mode`, the server-selected default draft `subject`, user `request`, short-ID `slots`, and the previous two weeks as `history`. HTML and internal slot identity never leave the server.
 
-The Agent receives compact slots:
+Slot shape:
 
 ```json
-{
-  "slot_id": "slot_0019_xxx",
-  "text": "完成接口开发",
-  "location": "行表头：项目A；列表头：工作内容 / 本周进展"
-}
+{"id":"s7","text":"完成接口开发","loc":"项目A / 本周进展"}
 ```
 
-It must compare all supplied history, rewrite conversational facts into formal report language, check inherited reporting-period dates, and call update with only:
+`loc` is optional and advisory only. The actual write mapping remains server-side. IDs are local to the current `resume_token`; copy them exactly and never invent them.
 
-```json
-{
-  "slot_id": "slot_0019_xxx",
-  "new_text": "完成接口联调。"
-}
+After deciding changes, call:
+
+```text
+continue_action(
+  resume_token=<this weekly_report token>,
+  selections={
+    "changes": [{"id": "s7", "text": "完成接口联调"}]
+  }
+)
 ```
 
-Do not return HTML. Do not copy an old token. Do not write “no change” into a slot. Do not modify a header unless the user explicitly requests a header/date change.
+Only changed slots should be submitted. Rewrite current facts into concise formal report language, preserve established project/technical terminology, never invent facts, and review all inherited report-period dates/week markers in the body. The server automatically rolls supported Subject date/week markers forward by one week and returns that default draft Subject from `weekly_report`; pass `selections.subject` only when the user explicitly wants a different Subject. Local `id/text/subject` validation errors reuse the same token; only stale/expired/used/superseded contexts require another `weekly_report`.
 
-## Inspect the active surface
-
-```powershell
-.\.venv\Scripts\exchange-ews-mcp.exe tool-list
-.\.venv\Scripts\exchange-ews-mcp.exe tool-list --profile debug
-```
+The server automatically chooses `reply_all` when the latest source contains a visible quoted-history sender header (`发件人` or standalone `From`), otherwise `compose`. Compose copies the source To/CC.

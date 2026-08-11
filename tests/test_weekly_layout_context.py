@@ -210,11 +210,11 @@ def test_compact_slots_keep_only_model_critical_fields() -> None:
         item["text"]: item
         for item in compact_editable_text_slots_for_agent(raw, template_html=html)
     }
-    assert set(compact["完成联调"]) == {"slot_id", "text", "location"}
-    assert compact["完成联调"]["location"] == (
+    assert set(compact["完成联调"]) == {"id", "text", "loc"}
+    assert compact["完成联调"]["loc"] == (
         "表格位置：第2行第2列；行表头：项目A；列表头：本周进展；右邻：性能测试"
     )
-    assert compact["性能测试"]["location"] == (
+    assert compact["性能测试"]["loc"] == (
         "表格位置：第2行第3列；行表头：项目A；列表头：下周计划；左邻：完成联调"
     )
     assert "layout_context" not in compact["完成联调"]
@@ -229,7 +229,7 @@ def test_compact_slot_location_is_nullable_and_bounded() -> None:
         extract_editable_text_slots(no_context_html),
         template_html=no_context_html,
     )[0]
-    assert no_context["location"] is None
+    assert "loc" not in no_context
 
     long_header = "项目" * 200
     html = (
@@ -241,8 +241,8 @@ def test_compact_slot_location_is_nullable_and_bounded() -> None:
         template_html=html,
     )
     target = next(item for item in compact if item["text"] == "完成联调")
-    assert target["location"] is not None
-    assert len(target["location"]) <= 640
+    assert target["loc"] is not None
+    assert len(target["loc"]) <= 640
 
 
 
@@ -260,8 +260,8 @@ def test_compact_location_exposes_outlook_td_double_header_candidates() -> None:
             extract_editable_text_slots(html), template_html=html
         )
     }
-    progress_location = compact["完成联调"]["location"]
-    plan_location = compact["性能测试"]["location"]
+    progress_location = compact["完成联调"]["loc"]
+    plan_location = compact["性能测试"]["loc"]
     assert isinstance(progress_location, str)
     assert "列表头：工作内容" in progress_location
     assert "列表头候选：本周进展" in progress_location
@@ -300,8 +300,7 @@ def test_compact_layout_failure_still_returns_usable_slots(monkeypatch) -> None:
     )
     assert compact == [
         {
-            "slot_id": compact[0]["slot_id"],
+            "id": "s1",
             "text": "完成联调",
-            "location": None,
         }
     ]

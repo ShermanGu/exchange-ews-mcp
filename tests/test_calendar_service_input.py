@@ -87,11 +87,26 @@ def install_fakes(monkeypatch, tmp_path):
 def test_atomic_availability_accepts_local_time(monkeypatch, tmp_path) -> None:
     client = install_fakes(monkeypatch, tmp_path)
     result = service.get_user_availability(
-        attendees=[{"email": "room@example.com", "attendee_type": "Room"}],
+        attendees=[{"email": "alice@example.com", "attendee_type": "Required"}],
         start="2026-08-03T09:00:00", end="2026-08-03T10:00:00",
     )
     assert client.calls[0][1]["start"] == "2026-08-03T01:00:00Z"
     assert result["local_start"] == "2026-08-03T09:00:00+08:00"
+
+
+def test_atomic_availability_rejects_room_and_resource_before_client(monkeypatch, tmp_path) -> None:
+    client = install_fakes(monkeypatch, tmp_path)
+    for attendee_type in ("Room", "Resource"):
+        try:
+            service.get_user_availability(
+                attendees=[{"email": "space@example.com", "attendee_type": attendee_type}],
+                start="2026-08-03T09:00:00", end="2026-08-03T10:00:00",
+            )
+        except ValueError as exc:
+            assert "会议室/资源邮箱忙闲查询未启用" in str(exc)
+        else:
+            raise AssertionError(f"expected ValueError for {attendee_type}")
+    assert client.calls == []
 
 
 def test_atomic_calendar_list_accepts_local_time(monkeypatch, tmp_path) -> None:

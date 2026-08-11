@@ -12,6 +12,7 @@ def test_tool_list_production_output(capsys) -> None:
     assert len(payload["debug_only_tools"]) == 6
     assert "create_meeting" not in payload["visible_tools"]
     assert "save_meeting" in payload["visible_tools"]
+    assert "resolve_people" in payload["visible_tools"]
     assert "schedule_meeting" not in payload["visible_tools"]
 
 
