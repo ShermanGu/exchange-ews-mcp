@@ -1,4 +1,4 @@
-# Exchange EWS MCP v0.8.3
+# Exchange EWS MCP v0.9.0
 
 [English](README.md) | **简体中文**
 
@@ -20,7 +20,7 @@
 
 - 📧 搜索邮件、新建草稿、回复、转发、修改草稿、添加附件。
 - 👥 使用姓名全拼或完整邮箱解析收件人，并处理重名情况。
-- 📝 自动更新周报，同时尽量保留原来的 Outlook HTML 格式。
+- 📝 自动更新周报，同时尽量保留原来的 Outlook HTML 格式，也支持先总结其他人的周报邮件再生成自己的周报草稿。
 - 📅 查询忙闲、找多人共同时间、创建/修改会议、确认后发送邀请。
 - 🔐 密码保存在 Windows 凭据管理器，不写进项目文件。
 - 🛡️ 邮件草稿优先，最后的“发送”仍然由你决定。
@@ -150,7 +150,7 @@ Arguments / 参数：
 .\.venv\Scripts\exchange-ews-mcp.exe tool-list
 ```
 
-预期版本：`0.8.3` · Production 工具数量：`11`
+预期版本：`0.9.0` · Production 工具数量：`11`
 
 🎉 到这里就完成了，可以直接让 Agent 开始干活。
 
@@ -158,6 +158,10 @@ Arguments / 参数：
 
 ```text
 找到我最新一封周报，根据我这周的进展帮我更新一下。
+```
+
+```text
+把 A、B 发给我的周报总结一下，再根据总结生成我的新周报草稿。
 ```
 
 ```text
@@ -182,16 +186,20 @@ Arguments / 参数：
 ## 📝 周报流程
 
 ```text
-找到上一封周报
-      ↓
-读取三周上下文（当前周 + 前两周）
-      ↓
-Agent 判断哪些地方发生变化
-      ↓
-只更新相关文字
-      ↓
-自动创建未发送的 Reply All 或新建草稿
+用户直接输入 ──────────────────┐
+                                ├→ weekly_report(request=...)
+search_mail/read_mail → LLM 总结 ┘
+                                ↓
+                      读取三周上下文和 slots
+                                ↓
+                      Agent 按 loc 路由 request
+                                ↓
+                         只更新相关文字
+                                ↓
+                 自动创建未发送的 Reply All 或新建草稿
 ```
+
+对于“总结 A/B 的周报再生成我的周报”这类请求，Agent 必须先搜索并读取来源邮件，用 LLM 总结后把总结结果作为 `weekly_report(request=...)` 的 `request`；`weekly_report` 自身不会搜索其他人的邮件。
 
 Agent **不会重新生成整份 HTML**。原来的表格和格式由 Server 保留，只替换需要更新的文字。Agent 使用 `s1` 这类短局部槽位 ID；Server 会自动把可识别的 Subject 日期/周次顺延到下一周。
 

@@ -18,7 +18,7 @@ import subprocess
 import sys
 
 ROOT = Path(__file__).resolve().parents[1]
-EXPECTED_VERSION = "0.8.3"
+EXPECTED_VERSION = "0.9.0"
 EXPECTED_PRODUCTION_TOOLS = 11
 EXPECTED_DEBUG_TOOLS = 17
 EXPECTED_DT_GROUPS = (

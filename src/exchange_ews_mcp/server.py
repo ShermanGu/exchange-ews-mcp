@@ -308,7 +308,7 @@ def reply_to_email(
 
 
 def get_weekly_report_context(
-    user_input: str,
+    request: str,
     reference_materials: list[dict[str, str]] | None = None,
     subject_contains: str = "周报",
     folder: str = "sentitems",
@@ -323,7 +323,7 @@ def get_weekly_report_context(
     上下文中；本 helper 只读，不创建 Exchange 草稿。
     """
     return service.get_weekly_report_context(
-        user_input=user_input,
+        request=request,
         reference_materials=reference_materials,
         subject_contains=subject_contains,
         folder=folder,
@@ -334,7 +334,7 @@ def get_weekly_report_context(
 
 
 def weekly_report(
-    user_input: str,
+    request: str,
     reference_materials: list[dict[str, str]] | None = None,
     subject_contains: str = "周报",
     folder: str = "sentitems",
@@ -343,11 +343,27 @@ def weekly_report(
 ) -> dict[str, Any]:
     """处理“周报”请求的唯一 Agent 入口。
 
-    返回紧凑 JSON：resume_token、mode、subject、request、最新模板的 slots，
-    以及前两周 history。slots.id 是本次上下文局部短 ID（s1、s2...），必须原样
-    使用，不得猜测或自行构造；loc 只用于理解版面，不参与真正写入定位。
+    request 是“本次要写入新周报的最终修改需求”。它既可以直接来自用户，也可以是 Agent
+    在调用本工具之前通过 search_mail/read_mail 读取其他人的周报或相关邮件后，先用 LLM 总结
+    得到的自然语言输入。若用户要求“总结 A、B 发给我的周报并生成我的周报”，应先完成邮件
+    搜索、读取和总结，再把总结结果作为 request 调用 weekly_report；不要把“去搜索并总结 A、B”
+    这类元指令原样作为 request。weekly_report 本身只处理自己的周报模板，不负责搜索他人的邮件。
 
-    生成下一周内容时：用户本次事实优先于历史；只提交确实需要变化的槽位；
+    返回紧凑 JSON：resume_token、mode、subject、request、instructions、最新模板的 slots，
+    以及前两周 history。slots.id 是本次上下文局部短 ID（s1、s2...），必须原样
+    使用，不得猜测或自行构造；loc 是压缩后的模板结构上下文，只用于理解版面和语义，
+    不参与真正写入定位。
+
+    生成下一周内容时，必须先语义拆解 request，再进行 slot routing。slot.loc 是原周报的显式
+    结构路径，每个路径文本后面的括号都会标明该文本在表格中的位置/层级身份，例如：
+    `周报（纵向表头） = nl2sql项目（横向表头） > 项目进展（二级纵向表头）`。`=` 表示一级
+    纵向表头与一级横向表头在当前内容位置交叉，`>` 表示继续进入更具体的下一级表头，越靠右
+    越具体。路由时主要理解括号前的真实表头文字，括号里的纵向/横向/二级等位置用于理解层级
+    和消歧；slot.text 是该路径末端当前承载的实际内容。不能因为某个 slot 文本关键词看起来最
+    相似，就把整段 request 放入该 slot。一段输入可以修改多个 slot；属于不同 loc 的事实必须
+    分别更新；只有确认属于同一 loc 的多条事实才合并后改写。用户本次事实
+    优先于历史；只提交确实需要变化的槽位；聊天性、情绪性或与正式周报无关的信息可以
+    忽略；无法可靠确定归属时不要猜测或修改无关 slot。
     将口语化事实改写为简洁、正式、客观的周报文本；延续历史中的正式项目名和
     技术术语，不得虚构事实。必须检查正文中所有周期性日期/周次并顺延。Server
     会自动把可识别的 Subject 日期/周次顺延一周；返回的 subject 已是默认草稿主题。
@@ -359,7 +375,7 @@ def weekly_report(
     阶段自动决定 Reply All 或新建草稿。
     """
     return service.weekly_report(
-        user_input=user_input,
+        request=request,
         reference_materials=reference_materials,
         subject_contains=subject_contains,
         folder=folder,

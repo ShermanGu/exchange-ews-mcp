@@ -1,4 +1,4 @@
-# Fresh install and upgrade — v0.8.3
+# Fresh install and upgrade — v0.9.0
 
 ## Clean installation
 
@@ -18,7 +18,7 @@ Verify:
 Expected:
 
 ```text
-version = 0.8.3
+version = 0.9.0
 visible_tool_count = 11
 ```
 
@@ -40,7 +40,7 @@ Configure allowed attachment roots and calendar preferences as needed.
 1. Keep the existing Windows user profile and Credential Manager entries.
 2. Replace or update the repository files.
 3. Run `install.cmd` from the new repository.
-4. Confirm both module and metadata versions are `0.8.3`.
+4. Confirm both module and metadata versions are `0.9.0`.
 5. Regenerate the MCP configuration.
 6. Completely restart the MCP client.
 7. Verify that 11 production tools are visible.

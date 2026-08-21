@@ -27,6 +27,17 @@ from .weekly_report import (
 DEFAULT_HISTORY_DAYS = 365
 MAX_HISTORY_MESSAGES = 100
 WEEKLY_FLOW_TTL_MINUTES = 30
+WEEKLY_SLOT_ROUTING_INSTRUCTIONS = (
+    "request 是本次周报要吸收的最终修改需求，可以来自用户直接输入，也可以由 Agent 先读取并总结其他邮件后生成；它不是任何一个 slot 的 replacement 原文。"
+    "先把 request 拆成最小的独立工作事实/修改意图，再逐条选择 slot；"
+    "禁止先挑一个最相似的 slot 后把整段 request 塞进去。"
+    "slot.loc 是原周报的显式结构路径；每个路径文本后面的括号都标明该文本在表格中的位置/层级身份。"
+    "例如：周报（纵向表头） = nl2sql项目（横向表头） > 项目进展（二级纵向表头）。"
+    "其中 `=` 表示一级纵向表头与一级横向表头在当前内容位置交叉，`>` 表示继续进入更具体的下一级表头；越靠右越具体。"
+    "路由时主要理解括号前的真实表头文字，括号中的纵向/横向/二级等位置用于理解层级和消歧；slot.text 是该路径末端当前承载的实际内容。"
+    "一段 request 可以产生多个 changes；属于不同 loc 的事实必须分别写入不同 slot，只有确认多条事实属于同一 loc 时才合并。"
+    "聊天性、情绪性、解释过程中的无关内容可以忽略；无法可靠确定归属时不要猜测或修改无关 slot。"
+)
 
 
 def _valid_email(value: str) -> str | None:
@@ -817,7 +828,7 @@ class SemanticMailWorkflow:
     def get_weekly_report_context(
         self,
         *,
-        user_input: str,
+        request: str,
         reference_materials: list[dict[str, str]] | None = None,
         subject_contains: str = "周报",
         folder: str = "sentitems",
@@ -832,9 +843,9 @@ class SemanticMailWorkflow:
         ``history`` references.  HTML, offsets, long internal slot ids, hashes,
         addresses and EWS identifiers remain server-side behind ``resume_token``.
         """
-        user_value = user_input.strip()
-        if not user_value:
-            raise ValueError("user_input 不能为空。")
+        request_value = request.strip()
+        if not request_value:
+            raise ValueError("request 不能为空。")
         subject_value = subject_contains.strip()
         if not subject_value:
             raise ValueError("subject_contains 不能为空。")
@@ -1016,7 +1027,8 @@ class SemanticMailWorkflow:
             "resume_token": flow_token,
             "mode": draft_mode,
             "subject": auto_subject,
-            "request": user_value,
+            "request": request_value,
+            "instructions": WEEKLY_SLOT_ROUTING_INSTRUCTIONS,
             "slots": agent_slots,
             "history": report_views[1:],
         }

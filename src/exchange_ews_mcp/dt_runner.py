@@ -1000,7 +1000,7 @@ def run_weekly_report_v06_integration_tests(
     else:
         def get_context() -> dict[str, Any]:
             result = workflow.get_weekly_report_context(
-                user_input=f"{stamp} DT：验证 weekly_report 与 continue_action 草稿链路。",
+                request=f"{stamp} DT：验证 weekly_report 与 continue_action 草稿链路。",
                 subject_contains=profile.subject_contains,
                 folders=["sentitems"],
                 lookback_days=365,

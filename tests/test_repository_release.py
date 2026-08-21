@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 from pathlib import Path
+import inspect
 
 from exchange_ews_mcp import __version__
+from exchange_ews_mcp import server
 from exchange_ews_mcp.dt_config import VALID_GROUPS
 from exchange_ews_mcp.tool_profiles import tool_names
 
@@ -68,7 +70,7 @@ def test_scripted_pytest_invocations_use_python_module_mode() -> None:
 
 
 def test_public_docs_match_tool_and_workflow_contract() -> None:
-    assert __version__ == "0.8.3"
+    assert __version__ == "0.9.0"
     assert len(tool_names()) == 11
     assert len(tool_names(include_debug_tools=True)) == 17
     assert VALID_GROUPS == (
@@ -80,11 +82,21 @@ def test_public_docs_match_tool_and_workflow_contract() -> None:
     )
     for name in ("README.md", "README.zh-CN.md", "docs/AGENT-CONNECTION.md", "docs/AGENT-TOOLS.md"):
         text = read(name)
-        assert "0.8.3" in text
+        assert "0.9.0" in text
         assert "weekly_report" in text
         assert "continue_action" in text
         assert "save_meeting" in text
         assert "send_meeting_invitation" in text
+
+
+def test_weekly_report_public_schema_uses_request_input() -> None:
+    parameters = inspect.signature(server.weekly_report).parameters
+    assert "request" in parameters
+    assert parameters["request"].default is inspect.Parameter.empty
+    assert "user_input" not in parameters
+    doc = server.weekly_report.__doc__ or ""
+    assert "search_mail/read_mail" in doc
+    assert "总结结果作为 request" in doc
 
 
 def test_ci_runs_supported_windows_matrix_and_package_build() -> None:

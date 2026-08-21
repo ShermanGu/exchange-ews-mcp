@@ -266,7 +266,7 @@ def test_all_server_wrappers_delegate_to_matching_service(monkeypatch) -> None:
         "required_attendees": ["a@company.com"], "query": "alice",
         "weekly_report_ref": "weekly_x",
         "weekly_flow_token": "weeklyflow_x",
-        "user_input": "更新项目进展",
+        "request": "更新项目进展",
         "changes": [{"id": "s1", "text": "新周报"}],
         "mode": "compose",
         "calendar_ref": "cal_x",

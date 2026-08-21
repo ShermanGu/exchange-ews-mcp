@@ -1,4 +1,4 @@
-# Connect an Agent to Exchange EWS MCP v0.8.3
+# Connect an Agent to Exchange EWS MCP v0.9.0
 
 ## 1. Install and verify
 
@@ -13,7 +13,7 @@ cd D:\tools\exchange-ews-mcp
 Expected:
 
 ```text
-version = 0.8.3
+version = 0.9.0
 visible_tool_count = 11
 ```
 
@@ -113,7 +113,7 @@ Expected safety behavior:
 
 ## 6. Weekly-report Agent requirements
 
-- Call `weekly_report` for every new weekly-report user request.
+- For direct weekly updates, pass the user facts as `weekly_report(request=...)`. For aggregation requests, first `search_mail`/`read_mail`, summarize with the LLM, then pass that summary as `request`.
 - Use only the token and short `sN` IDs returned by that call; never invent IDs.
 - Compare the current `slots` with the previous two weeks in `history`.
 - Rewrite conversational input into concise formal report language.

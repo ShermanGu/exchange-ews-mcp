@@ -282,19 +282,44 @@ def test_folder_aliases_are_normalized() -> None:
     ) == ["inbox", "sentitems"]
 
 
+def test_context_rejects_empty_request(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="request 不能为空"):
+        _workflow(tmp_path, StatefulWeeklyClient()).get_weekly_report_context(request="   ")
+
+
+def test_context_accepts_agent_prepared_summary_as_request(tmp_path: Path) -> None:
+    summary = (
+        "NL2SQL 项目本周完成查询接口优化和问题修复，下周开展准确率验证；"
+        "Exchange MCP 本周完成周报 slot 优化，下周进行真实环境测试。"
+    )
+    result = _workflow(tmp_path, StatefulWeeklyClient()).get_weekly_report_context(
+        request=f"  {summary}  "
+    )
+    assert result["request"] == summary
+    assert "可以来自用户直接输入" in result["instructions"]
+    assert "Agent 先读取并总结其他邮件后生成" in result["instructions"]
+
+
 def test_context_returns_compact_three_week_contract(tmp_path: Path) -> None:
     client = StatefulWeeklyClient()
     result = _workflow(tmp_path, client).get_weekly_report_context(
-        user_input="项目A完成联调", reference_materials=[{"name": "测试", "content": "全部通过"}]
+        request="项目A完成联调", reference_materials=[{"name": "测试", "content": "全部通过"}]
     )
-    assert set(result) == {"resume_token", "mode", "subject", "request", "slots", "history"}
+    assert set(result) == {"resume_token", "mode", "subject", "request", "instructions", "slots", "history"}
     assert result["resume_token"].startswith("weeklyflow_")
     assert result["mode"] == "reply_all"
     assert result["subject"] == "项目周报 2026-08-03 至 2026-08-09"
     assert result["request"] == "项目A完成联调"
+    assert "拆成最小的独立工作事实/修改意图" in result["instructions"]
+    assert "禁止先挑一个最相似的 slot" in result["instructions"]
+    assert "周报（纵向表头） = nl2sql项目（横向表头） > 项目进展（二级纵向表头）" in result["instructions"]
+    assert "每个路径文本后面的括号" in result["instructions"]
+    assert "slot.text 是该路径末端当前承载的实际内容" in result["instructions"]
+    assert "属于不同 loc 的事实必须分别写入不同 slot" in result["instructions"]
     assert [item["text"] for item in result["history"]] == ["WK2_MARKER", "WK1_MARKER"]
     assert len(result["history"]) == 2
     assert all(set(slot) <= {"id", "text", "loc"} for slot in result["slots"])
+    assert all("role" not in slot for slot in result["slots"])
     assert [slot["id"] for slot in result["slots"]] == [f"s{i}" for i in range(1, len(result["slots"]) + 1)]
     assert all(not slot["id"].startswith("slot_") for slot in result["slots"])
     assert client.search_calls[0]["limit"] == 3
@@ -304,7 +329,7 @@ def test_context_returns_compact_three_week_contract(tmp_path: Path) -> None:
 
 def test_context_reply_history_records_reply_all_mode(tmp_path: Path) -> None:
     workflow = _workflow(tmp_path, StatefulWeeklyClient())
-    context = workflow.get_weekly_report_context(user_input="更新")
+    context = workflow.get_weekly_report_context(request="更新")
     state = workflow.store.get_action_session(context["resume_token"])["state"]
     assert state["draft_mode"] == "reply_all"
     assert state["history_boundary_keyword"] == "From"
@@ -312,7 +337,7 @@ def test_context_reply_history_records_reply_all_mode(tmp_path: Path) -> None:
 
 def test_context_no_history_records_compose_and_copies_addresses(tmp_path: Path) -> None:
     workflow = _workflow(tmp_path, StatefulWeeklyClient(include_history=False))
-    context = workflow.get_weekly_report_context(user_input="更新")
+    context = workflow.get_weekly_report_context(request="更新")
     state = workflow.store.get_action_session(context["resume_token"])["state"]
     assert state["draft_mode"] == "compose"
     assert state["source_to"] == ["team@company.com", "owner@company.com"]
@@ -324,7 +349,7 @@ def test_context_compose_requires_original_to(tmp_path: Path) -> None:
     client = StatefulWeeklyClient(include_history=False)
     client.messages["WK3"]["to"] = []
     with pytest.raises(ValueError, match="To 收件人"):
-        _workflow(tmp_path, client).get_weekly_report_context(user_input="更新")
+        _workflow(tmp_path, client).get_weekly_report_context(request="更新")
 
 
 def test_text_only_html_validation_accepts_text_changes_and_preserves_structure() -> None:
@@ -354,6 +379,24 @@ def test_editable_slots_apply_plain_text_and_escape_html() -> None:
     assert result.html_validation.changed_text_slots == 1
 
 
+def test_semantic_slot_update_preserves_inline_markup_and_rewrites_as_one_unit() -> None:
+    template = '<p><span class="a">完成开发</span><font face="Arial">并完成测试</font></p>'
+    slot = extract_editable_text_slots(template)[0]
+    assert slot.text == "完成开发并完成测试"
+    assert len(slot.fragments) == 2
+
+    result = apply_editable_text_slot_changes(
+        template, [{"slot_id": slot.slot_id, "new_text": "完成接口重构并通过回归验证"}]
+    )
+
+    assert '<span class="a">' in result.html
+    assert '<font face="Arial">' in result.html
+    assert result.html_validation.structure_sha256 == html_structure_sha256(template)
+    assert "完成接口重构并通过回归验证" in result.html
+    assert result.applied_changes == 1
+    assert result.changed_slot_ids == (slot.slot_id,)
+
+
 def test_slot_update_rejects_unknown_and_legacy_fields() -> None:
     template = '<p>旧</p>'
     slot = extract_editable_text_slots(template)[0]
@@ -368,7 +411,7 @@ def test_slot_update_rejects_unknown_and_legacy_fields() -> None:
 def test_continue_action_creates_reply_all_once_and_never_updates_body(tmp_path: Path) -> None:
     client = StatefulWeeklyClient()
     workflow = _workflow(tmp_path, client)
-    context = workflow.get_weekly_report_context(user_input="日期改到下周，完成测试")
+    context = workflow.get_weekly_report_context(request="日期改到下周，完成测试")
     slots = {item["text"]: item for item in context["slots"]}
     result = workflow.continue_action(
         resume_token=context["resume_token"],
@@ -398,7 +441,7 @@ def test_continue_action_creates_reply_all_once_and_never_updates_body(tmp_path:
 def test_continue_action_without_history_creates_new_draft_with_copied_to_cc(tmp_path: Path) -> None:
     client = StatefulWeeklyClient(include_history=False)
     workflow = _workflow(tmp_path, client)
-    context = workflow.get_weekly_report_context(user_input="完成测试")
+    context = workflow.get_weekly_report_context(request="完成测试")
     target = next(item for item in context["slots"] if item["text"] == "完成旧任务")
     result = workflow.continue_action(
         resume_token=context["resume_token"],
@@ -423,7 +466,7 @@ def test_continue_action_without_history_creates_new_draft_with_copied_to_cc(tmp
 def test_reply_all_without_period_preserves_exchange_native_subject(tmp_path: Path) -> None:
     client = StatefulWeeklyClient(include_history=True, latest_subject="项目周报")
     workflow = _workflow(tmp_path, client)
-    context = workflow.get_weekly_report_context(user_input="完成测试")
+    context = workflow.get_weekly_report_context(request="完成测试")
     target = next(item for item in context["slots"] if item["text"] == "完成旧任务")
     workflow.continue_action(
         resume_token=context["resume_token"],
@@ -437,7 +480,7 @@ def test_reply_all_without_period_preserves_exchange_native_subject(tmp_path: Pa
 def test_compose_mode_preserves_original_subject_when_agent_omits_subject(tmp_path: Path) -> None:
     client = StatefulWeeklyClient(include_history=False, latest_subject="项目周报")
     workflow = _workflow(tmp_path, client)
-    context = workflow.get_weekly_report_context(user_input="完成测试")
+    context = workflow.get_weekly_report_context(request="完成测试")
     target = next(item for item in context["slots"] if item["text"] == "完成旧任务")
     workflow.continue_action(
         resume_token=context["resume_token"],
@@ -449,7 +492,7 @@ def test_compose_mode_preserves_original_subject_when_agent_omits_subject(tmp_pa
 def test_subject_period_marker_is_rolled_forward_server_side(tmp_path: Path) -> None:
     client = StatefulWeeklyClient(include_history=False)
     workflow = _workflow(tmp_path, client)
-    context = workflow.get_weekly_report_context(user_input="完成测试")
+    context = workflow.get_weekly_report_context(request="完成测试")
     assert context["subject"] == "项目周报 2026-08-03 至 2026-08-09"
     target = next(item for item in context["slots"] if item["text"] == "完成旧任务")
     result = workflow.continue_action(
@@ -463,7 +506,7 @@ def test_subject_period_marker_is_rolled_forward_server_side(tmp_path: Path) -> 
 def test_subject_explicit_old_period_is_rejected_without_consuming_token(tmp_path: Path) -> None:
     client = StatefulWeeklyClient(include_history=False)
     workflow = _workflow(tmp_path, client)
-    context = workflow.get_weekly_report_context(user_input="完成测试")
+    context = workflow.get_weekly_report_context(request="完成测试")
     target = next(item for item in context["slots"] if item["text"] == "完成旧任务")
     with pytest.raises(ValueError, match="不能显式恢复为上一周主题"):
         workflow.continue_action(
@@ -479,7 +522,7 @@ def test_subject_explicit_old_period_is_rejected_without_consuming_token(tmp_pat
 def test_unknown_slot_id_does_not_consume_weekly_token_and_can_retry(tmp_path: Path) -> None:
     client = StatefulWeeklyClient()
     workflow = _workflow(tmp_path, client)
-    context = workflow.get_weekly_report_context(user_input="完成测试")
+    context = workflow.get_weekly_report_context(request="完成测试")
     target = next(item for item in context["slots"] if item["text"] == "完成旧任务")
 
     with pytest.raises(ValueError, match="slot id 不属于当前周报上下文"):
@@ -512,7 +555,7 @@ def test_unknown_slot_id_does_not_consume_weekly_token_and_can_retry(tmp_path: P
 def test_weekly_continue_action_rejects_unknown_selection_fields_before_write(tmp_path: Path) -> None:
     client = StatefulWeeklyClient()
     workflow = _workflow(tmp_path, client)
-    context = workflow.get_weekly_report_context(user_input="更新")
+    context = workflow.get_weekly_report_context(request="更新")
     with pytest.raises(ValueError, match="只支持 changes 和 subject"):
         workflow.continue_action(
             resume_token=context["resume_token"],
@@ -525,7 +568,7 @@ def test_weekly_continue_action_rejects_unknown_selection_fields_before_write(tm
 def test_update_rejects_stale_source_before_creating_draft(tmp_path: Path) -> None:
     client = StatefulWeeklyClient()
     workflow = _workflow(tmp_path, client)
-    context = workflow.get_weekly_report_context(user_input="更新")
+    context = workflow.get_weekly_report_context(request="更新")
     target = next(item for item in context["slots"] if item["text"] == "完成旧任务")
     client.messages["WK3"]["body_html"] = client.messages["WK3"]["body_html"].replace("WK2_QUOTED", "CHANGED")
     result = workflow.continue_action(
@@ -542,7 +585,7 @@ def test_update_rejects_stale_source_before_creating_draft(tmp_path: Path) -> No
 def test_update_rejects_when_newer_weekly_report_appears(tmp_path: Path) -> None:
     client = StatefulWeeklyClient()
     workflow = _workflow(tmp_path, client)
-    context = workflow.get_weekly_report_context(user_input="更新")
+    context = workflow.get_weekly_report_context(request="更新")
     original = client.search_emails_multi_folder
 
     def newer(**kwargs):
@@ -562,8 +605,8 @@ def test_update_rejects_when_newer_weekly_report_appears(tmp_path: Path) -> None
 def test_weekly_token_is_one_shot_and_new_context_supersedes_old(tmp_path: Path) -> None:
     client = StatefulWeeklyClient()
     workflow = _workflow(tmp_path, client)
-    first = workflow.get_weekly_report_context(user_input="第一次")
-    second = workflow.get_weekly_report_context(user_input="第二次")
+    first = workflow.get_weekly_report_context(request="第一次")
+    second = workflow.get_weekly_report_context(request="第二次")
     assert workflow.store.get_action_session(first["resume_token"])["status"] == "superseded"
     target = next(item for item in second["slots"] if item["text"] == "完成旧任务")
     done = workflow.continue_action(
@@ -582,13 +625,13 @@ def test_weekly_token_is_one_shot_and_new_context_supersedes_old(tmp_path: Path)
 
 def test_context_max_reports_is_three(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="max_reports"):
-        _workflow(tmp_path, StatefulWeeklyClient()).get_weekly_report_context(user_input="更新", max_reports=4)
+        _workflow(tmp_path, StatefulWeeklyClient()).get_weekly_report_context(request="更新", max_reports=4)
 
 
 def test_context_supports_non_table_latest_layout(tmp_path: Path) -> None:
     body = _reply_body('<h2>项目A</h2><p>完成接口联调。</p><ul><li>准备性能测试</li></ul>')
     result = _workflow(tmp_path, StatefulWeeklyClient(latest_body=body)).get_weekly_report_context(
-        user_input="项目A联调完成，下周做性能测试"
+        request="项目A联调完成，下周做性能测试"
     )
     slots = {item["text"]: item for item in result["slots"]}
     assert "项目A" in slots
@@ -601,4 +644,4 @@ def test_context_rejects_non_html_latest_message(tmp_path: Path) -> None:
     client = StatefulWeeklyClient()
     client.messages["WK3"]["body_type"] = "Text"
     with pytest.raises(ValueError, match="只接受 HTML"):
-        _workflow(tmp_path, client).get_weekly_report_context(user_input="更新")
+        _workflow(tmp_path, client).get_weekly_report_context(request="更新")

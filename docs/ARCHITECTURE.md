@@ -1,4 +1,4 @@
-# Architecture — Exchange EWS MCP v0.8.3
+# Architecture — Exchange EWS MCP v0.9.0
 
 ## Design goals
 
