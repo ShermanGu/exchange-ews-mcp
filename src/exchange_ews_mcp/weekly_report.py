@@ -601,8 +601,18 @@ class TextOnlyHtmlValidation:
 
 
 @dataclass(frozen=True)
+class EditableTextFragment:
+    """One physical text fragment that belongs to a semantic editable slot."""
+
+    raw_text: str
+    start: int
+    end: int
+    html_path: tuple[str, ...]
+
+
+@dataclass(frozen=True)
 class EditableTextSlot:
-    """One non-empty, unprotected text node in the latest report template."""
+    """One semantic editable text unit backed by one or more raw text fragments."""
 
     slot_id: str
     index: int
@@ -611,6 +621,7 @@ class EditableTextSlot:
     start: int
     end: int
     html_path: tuple[str, ...]
+    fragments: tuple[EditableTextFragment, ...] = ()
     leading_padding: str = ""
     trailing_padding: str = ""
 
@@ -954,25 +965,94 @@ def _slot_display_text(raw_core: str) -> str:
     return html.unescape(raw_core).replace("\xa0", " ")
 
 
-def extract_editable_text_slots(template_html: str) -> list[EditableTextSlot]:
-    """Return stable editable text slots without exposing HTML to the Agent.
+_SEMANTIC_SLOT_CONTAINERS = {
+    "p", "li", "td", "th", "blockquote", "div", "caption",
+    "h1", "h2", "h3", "h4", "h5", "h6",
+}
+_SLOT_GROUP_BARRIER_TAGS = _SEMANTIC_SLOT_CONTAINERS | {
+    "a", "br", "hr", "img", "table", "tr", "thead", "tbody", "tfoot",
+    "ul", "ol", "dl", "dt", "dd",
+}
+_SLOT_LABEL_FORMATTING_TAGS = {"b", "strong"}
 
-    A slot is one non-empty text node outside script/style/title/pre/textarea.
-    Tags, attributes, comments and whitespace-only nodes never become slots.
+
+def _common_html_path(paths: list[tuple[str, ...]]) -> tuple[str, ...]:
+    if not paths:
+        return ()
+    prefix = list(paths[0])
+    for path in paths[1:]:
+        limit = min(len(prefix), len(path))
+        index = 0
+        while index < limit and prefix[index] == path[index]:
+            index += 1
+        del prefix[index:]
+        if not prefix:
+            break
+    return tuple(prefix)
+
+
+def _nearest_semantic_container(stack: list[tuple[str, int]]) -> tuple[str, int] | None:
+    for frame in reversed(stack):
+        if frame[0] in _SEMANTIC_SLOT_CONTAINERS:
+            return frame
+    return None
+
+
+def _looks_like_inline_label(text: str, html_path: tuple[str, ...]) -> bool:
+    value = re.sub(r"\s+", " ", text).strip()
+    return (
+        bool(value)
+        and len(value) <= 30
+        and value.endswith((":", "："))
+        and any(tag in _SLOT_LABEL_FORMATTING_TAGS for tag in html_path)
+    )
+
+
+def _semantic_slot_text(template_html: str, fragments: list[EditableTextFragment]) -> str:
+    if len(fragments) == 1:
+        return _slot_display_text(fragments[0].raw_text)
+    raw_slice = template_html[fragments[0].start : fragments[-1].end]
+    return visible_text(raw_slice, limit=None)
+
+
+def extract_editable_text_slots(template_html: str) -> list[EditableTextSlot]:
+    """Return stable semantic editable slots without reserializing Outlook HTML.
+
+    Inline formatting nodes such as ``span``/``font``/``b`` no longer create
+    independent Agent slots. Adjacent visible fragments inside the same
+    paragraph/list item/table cell are grouped into one semantic unit, while
+    block boundaries, links, line breaks, images and nested containers remain
+    hard boundaries. The slot retains every original text-fragment offset so
+    updates can preserve all tags, attributes, VML and whitespace verbatim.
     """
     lexemes = _lex_html(template_html)
-    stack: list[str] = []
-    slots: list[EditableTextSlot] = []
+    stack: list[tuple[str, int]] = []
+    groups: list[list[EditableTextFragment]] = []
+    group_containers: list[tuple[str, int] | tuple[str, int, int]] = []
+    barrier = True
 
     for lexeme in lexemes:
         if lexeme.kind == "tag" and lexeme.name:
+            name = lexeme.name
             if lexeme.closing:
-                if stack and stack[-1] == lexeme.name:
+                if name in _SLOT_GROUP_BARRIER_TAGS:
+                    barrier = True
+                if stack and stack[-1][0] == name:
                     stack.pop()
-            elif not lexeme.self_closing:
-                stack.append(lexeme.name)
+            else:
+                if name in _SLOT_GROUP_BARRIER_TAGS:
+                    barrier = True
+                if not lexeme.self_closing:
+                    stack.append((name, lexeme.start))
             continue
-        if lexeme.kind != "text" or lexeme.protected_text:
+
+        if lexeme.kind != "text":
+            # Outlook conditional comments/declarations can switch rendering
+            # branches. Never merge visible text across those boundaries.
+            barrier = True
+            continue
+        if lexeme.protected_text:
+            barrier = True
             continue
 
         leading, core, trailing = _split_raw_text_padding(lexeme.raw)
@@ -980,24 +1060,59 @@ def extract_editable_text_slots(template_html: str) -> list[EditableTextSlot]:
         if not display.strip():
             continue
 
-        index = len(slots) + 1
         start = lexeme.start + len(leading)
         end = lexeme.end - len(trailing)
+        path = tuple(name for name, _open_start in stack)
+        fragment = EditableTextFragment(
+            raw_text=core,
+            start=start,
+            end=end,
+            html_path=path,
+        )
+        container = _nearest_semantic_container(stack)
+        # Text outside a recognizable semantic block remains an independent
+        # slot; using its own offset prevents accidental cross-root merging.
+        group_key: tuple[str, int] | tuple[str, int, int]
+        group_key = container if container is not None else ("#text", start, end)
+
+        if groups and not barrier and group_containers[-1] == group_key:
+            groups[-1].append(fragment)
+        else:
+            groups.append([fragment])
+            group_containers.append(group_key)
+
+        barrier = _looks_like_inline_label(display, path)
+
+    slots: list[EditableTextSlot] = []
+    for fragments in groups:
+        text = _semantic_slot_text(template_html, fragments)
+        if not text.strip():
+            continue
+        index = len(slots) + 1
+        start = fragments[0].start
+        end = fragments[-1].end
+        html_path = _common_html_path([fragment.html_path for fragment in fragments])
+        raw_text = "".join(fragment.raw_text for fragment in fragments)
+        fragment_identity = "\x1e".join(
+            f"{fragment.start}:{fragment.end}:{'/'.join(fragment.html_path)}:{fragment.raw_text}"
+            for fragment in fragments
+        )
         digest_source = "\0".join(
-            [str(index), str(start), str(end), "/".join(stack), core]
+            [str(index), str(start), str(end), "/".join(html_path), fragment_identity]
         )
         slot_id = f"slot_{index:04d}_{hashlib.sha256(digest_source.encode('utf-8')).hexdigest()[:12]}"
         slots.append(
             EditableTextSlot(
                 slot_id=slot_id,
                 index=index,
-                text=display,
-                raw_text=core,
+                text=text,
+                raw_text=raw_text,
                 start=start,
                 end=end,
-                html_path=tuple(stack),
-                leading_padding=leading,
-                trailing_padding=trailing,
+                html_path=html_path,
+                fragments=tuple(fragments),
+                leading_padding="",
+                trailing_padding="",
             )
         )
     return slots
@@ -1071,12 +1186,6 @@ def _compact_context_text(value: Any, *, max_chars: int = _COMPACT_SLOT_LOCATION
     return text[: max_chars - 1].rstrip() + "…"
 
 
-def _append_location_part(parts: list[str], label: str, value: Any, *, max_chars: int = 120) -> None:
-    text = _compact_context_text(value, max_chars=max_chars)
-    if text:
-        parts.append(f"{label}：{text}")
-
-
 def _unique_context_texts(values: Any, *, max_chars: int = 100) -> list[str]:
     result: list[str] = []
     for raw in list(values or []):
@@ -1095,11 +1204,11 @@ def _candidate_header_texts(
     """Return ordered, de-duplicated weak header hints not already accepted.
 
     Outlook frequently serializes visual table headers as ordinary ``td``
-    elements.  Those cells may stay below the strong-header confidence
+    elements. Those cells may stay below the strong-header confidence
     threshold even though the layout analyser has still found them as nearby
-    header candidates.  Production ``location`` strings therefore expose the
-    candidate text with a clear ``候选`` marker instead of silently discarding
-    it or upgrading it to a confirmed header.
+    header candidates. The compact ``loc`` path may therefore retain a
+    structurally adjacent second-level column header without inventing a
+    backend semantic label for it.
     """
     raw_candidates = [item for item in list(candidates or []) if isinstance(item, dict)]
     confirmed_rows = [
@@ -1153,142 +1262,153 @@ def _candidate_header_texts(
     return result
 
 
-def _compact_slot_location(item: dict[str, Any]) -> str | None:
-    """Collapse internal layout analysis into one rich model-facing string.
+def _header_level_label(*, axis: str, level: int) -> str:
+    """Return the explicit structural label used inside compact ``loc`` nodes.
 
-    Only one nullable string crosses the MCP boundary, but it preserves as much
-    reliable positional information as practical: section path, logical table
-    coordinates, confirmed and candidate multi-level headers, neighbouring
-    cells, nested-table context, and non-table block/list neighbours.  Weak
-    header evidence is explicitly marked as ``候选`` so the Agent can use it
-    without mistaking inference for certainty.
+    ``column`` is rendered as a vertical header (纵向表头) and ``row`` as a
+    horizontal header (横向表头), matching the weekly-report terminology
+    exposed to the Agent.  Deeper header bands are labelled explicitly rather
+    than inferred semantically by the backend.
+    """
+    base = "纵向表头" if axis == "column" else "横向表头"
+    if level <= 1:
+        return base
+    chinese_levels = {
+        2: "二级",
+        3: "三级",
+        4: "四级",
+        5: "五级",
+        6: "六级",
+        7: "七级",
+        8: "八级",
+        9: "九级",
+        10: "十级",
+    }
+    prefix = chinese_levels.get(level, f"第{level}级")
+    return f"{prefix}{base}"
+
+
+def _annotated_header_chain(values: list[str], *, axis: str) -> list[str]:
+    return [
+        f"{text}（{_header_level_label(axis=axis, level=index)}）"
+        for index, text in enumerate(values, start=1)
+    ]
+
+
+def _compact_slot_location(item: dict[str, Any]) -> str | None:
+    """Return compact structural coordinates for Agent slot routing.
+
+    Table slots use an explicit grammar that mirrors how a person reads a
+    weekly-report table.  For example::
+
+        周报（纵向表头） = nl2sql项目（横向表头） > 项目进展（二级纵向表头）
+
+    ``=`` joins the primary vertical/column header and primary horizontal/row
+    header at the slot's table intersection. ``>`` continues into a more
+    specific header level.  Every text node carried by ``loc`` therefore also
+    carries its structural identity in parentheses.  The editable content
+    itself remains in ``slot.text`` and is not duplicated in ``loc``.
+
+    Only structural evidence extracted from the HTML is exposed; semantic
+    intent remains the Agent LLM's responsibility.
     """
     layout = item.get("layout_context")
     if not isinstance(layout, dict):
         return None
 
-    parts: list[str] = []
-    document = layout.get("document_context")
-    section_path: list[str] = []
-    if isinstance(document, dict):
-        section_path = _unique_context_texts(document.get("section_path"), max_chars=100)
-        if section_path:
-            parts.append("章节：" + " / ".join(section_path))
-        else:
-            _append_location_part(parts, "最近标题", document.get("nearest_heading"), max_chars=120)
+    slot_text = _compact_context_text(item.get("text"), max_chars=140)
 
-    used_values = set(section_path)
-
-    def append_unique(label: str, value: Any, *, max_chars: int = 120) -> None:
-        text = _compact_context_text(value, max_chars=max_chars)
-        if text and text not in used_values:
-            parts.append(f"{label}：{text}")
-            used_values.add(text)
+    def clean_chain(values: Any, *, max_chars: int = 100) -> list[str]:
+        result: list[str] = []
+        for raw in list(values or []):
+            text = _compact_context_text(raw, max_chars=max_chars)
+            if not text or text == slot_text or text in result:
+                continue
+            result.append(text)
+        return result
 
     table = layout.get("table_context")
     if isinstance(table, dict):
-        row_index = table.get("row_index")
-        column_index = table.get("column_index")
-        if isinstance(row_index, int) and isinstance(column_index, int):
-            parts.append(f"表格位置：第{row_index + 1}行第{column_index + 1}列")
+        row_headers = clean_chain(table.get("row_headers"))
+        if not row_headers:
+            nearest_row = _compact_context_text(table.get("nearest_row_header"), max_chars=100)
+            if nearest_row and nearest_row != slot_text:
+                row_headers = [nearest_row]
 
-        nesting_depth = table.get("nesting_depth")
-        if isinstance(nesting_depth, int) and nesting_depth > 0:
-            parts.append(f"嵌套表格：第{nesting_depth + 1}层")
-
-        row_headers = _unique_context_texts(table.get("row_headers"), max_chars=100)
-        column_headers = _unique_context_texts(table.get("column_headers"), max_chars=100)
         row_candidates = _candidate_header_texts(
             table.get("row_header_candidates"), accepted=row_headers, axis="row"
         )
+        if not row_headers:
+            row_headers = clean_chain(row_candidates)
+
+        column_headers = clean_chain(table.get("column_headers"))
+        if not column_headers:
+            nearest_column = _compact_context_text(
+                table.get("nearest_column_header"), max_chars=100
+            )
+            if nearest_column and nearest_column != slot_text:
+                column_headers = [nearest_column]
+
         column_candidates = _candidate_header_texts(
-            table.get("column_header_candidates"), accepted=column_headers, axis="column"
+            table.get("column_header_candidates"),
+            accepted=column_headers,
+            axis="column",
         )
+        for candidate in clean_chain(column_candidates):
+            if candidate not in column_headers:
+                column_headers.append(candidate)
 
-        if row_headers:
-            parts.append("行表头：" + " / ".join(row_headers))
-        elif nearest_row := _compact_context_text(table.get("nearest_row_header"), max_chars=100):
-            parts.append("行表头：" + nearest_row)
-        if row_candidates:
-            parts.append("行表头候选：" + " / ".join(row_candidates))
+        vertical = _annotated_header_chain(column_headers, axis="column")
+        horizontal = _annotated_header_chain(row_headers, axis="row")
 
-        if column_headers:
-            parts.append("列表头：" + " / ".join(column_headers))
-        elif nearest_column := _compact_context_text(table.get("nearest_column_header"), max_chars=100):
-            parts.append("列表头：" + nearest_column)
-        if column_candidates:
-            parts.append("列表头候选：" + " / ".join(column_candidates))
+        if vertical and horizontal:
+            # The primary column and row headers are peers at the cell
+            # intersection.  Deeper row/column bands are then appended from
+            # broad to specific with ``>``.  The common weekly-report case is
+            # exactly: col1 = row1 > col2.
+            location = f"{vertical[0]} = {horizontal[0]}"
+            tail = horizontal[1:] + vertical[1:]
+            if tail:
+                location += " > " + " > ".join(tail)
+            return _compact_context_text(location, max_chars=640)
 
-        # Neighbour cells remain useful even when a visual Outlook header was
-        # represented by a plain td and therefore only classified as a weak
-        # candidate.  Avoid exact duplicates already present in header paths.
-        known_headers = set(row_headers + column_headers + row_candidates + column_candidates)
-        for key, label in (
-            ("above_cell_text", "上邻"),
-            ("below_cell_text", "下邻"),
-            ("left_cell_text", "左邻"),
-            ("right_cell_text", "右邻"),
-        ):
-            value = _compact_context_text(table.get(key), max_chars=100)
-            if value and value not in known_headers:
-                parts.append(f"{label}：{value}")
+        if vertical:
+            return _compact_context_text(" > ".join(vertical), max_chars=640)
+        if horizontal:
+            return _compact_context_text(" > ".join(horizontal), max_chars=640)
 
-        _append_location_part(parts, "外层单元格", table.get("outer_cell_text"), max_chars=140)
-        if table.get("is_header_cell"):
-            parts.append("单元格角色：表头")
-        else:
-            role = _compact_context_text(table.get("cell_role"), max_chars=30)
-            if role and role != "data":
-                parts.append("单元格角色：" + role)
-
-        slot_count = table.get("cell_slot_count")
-        slot_index = table.get("slot_index_in_cell")
-        if isinstance(slot_count, int) and slot_count > 1 and isinstance(slot_index, int):
-            parts.append(f"同格文本节点：第{slot_index + 1}/{slot_count}个")
-
-    else:
-        container_type = _compact_context_text(layout.get("container_type"), max_chars=40)
-        container_labels = {
-            "paragraph": "段落",
-            "heading": "标题",
-            "list_item": "列表项",
-            "blockquote": "引用块",
-            "link_text": "链接文字",
-            "block_text": "文本块",
-            "inline_text": "行内文字",
-        }
-        if container_type and container_type != "unknown":
-            parts.append("内容类型：" + container_labels.get(container_type, container_type))
-
-        list_context = layout.get("list_context")
-        if isinstance(list_context, dict):
-            append_unique("父列表项", list_context.get("parent_item_text"), max_chars=120)
-            index = list_context.get("item_index")
-            depth = list_context.get("list_depth")
-            if isinstance(index, int):
-                value = f"第{index + 1}项"
-                if isinstance(depth, int) and depth > 0:
-                    value += f"，第{depth}层"
-                parts.append("列表位置：" + value)
-            append_unique("上一列表项", list_context.get("previous_item_text"), max_chars=120)
-            append_unique("下一列表项", list_context.get("next_item_text"), max_chars=120)
-
-        paragraph = layout.get("paragraph_context")
-        if isinstance(paragraph, dict):
-            append_unique("文本块标签", paragraph.get("paragraph_tag"), max_chars=20)
-            append_unique("上一文本块", paragraph.get("previous_paragraph_text"), max_chars=120)
-            append_unique("下一文本块", paragraph.get("next_paragraph_text"), max_chars=120)
-
-        if isinstance(document, dict):
-            append_unique("上一相邻块", document.get("previous_block_text"), max_chars=120)
-            append_unique("下一相邻块", document.get("next_block_text"), max_chars=120)
-
-    # A bare logical coordinate or an unavailable-layout placeholder does not
-    # explain the slot's meaning. Return null rather than spending tokens on
-    # context that cannot help the Agent choose a destination.
-    if len(parts) == 1 and parts[0].startswith("表格位置："):
+        # Nested/layout tables occasionally expose only their containing cell.
+        # Keep that structural hint explicit rather than inventing a header.
+        outer = _compact_context_text(table.get("outer_cell_text"), max_chars=120)
+        if outer and outer != slot_text:
+            return _compact_context_text(f"{outer}（父级单元格）", max_chars=640)
         return None
-    return _compact_context_text("；".join(parts))
+
+    # Non-table content may still have an explicit document-heading hierarchy.
+    # Every emitted text keeps an explicit structural label, just like table
+    # headers, so ``loc`` never mixes labelled and unlabelled nodes.
+    document = layout.get("document_context")
+    if isinstance(document, dict):
+        section_path = clean_chain(document.get("section_path"), max_chars=100)
+        if not section_path:
+            nearest = _compact_context_text(document.get("nearest_heading"), max_chars=120)
+            if nearest and nearest != slot_text:
+                section_path = [nearest]
+        if section_path:
+            annotated = []
+            for index, text in enumerate(section_path, start=1):
+                label = "章节标题" if index == 1 else f"{_header_level_label(axis='column', level=index).replace('纵向表头', '章节标题')}"
+                annotated.append(f"{text}（{label}）")
+            return _compact_context_text(" > ".join(annotated), max_chars=640)
+
+    list_context = layout.get("list_context")
+    if isinstance(list_context, dict):
+        parent = _compact_context_text(list_context.get("parent_item_text"), max_chars=120)
+        if parent and parent != slot_text:
+            return _compact_context_text(f"{parent}（列表父项）", max_chars=640)
+
+    return None
+
 
 
 def compact_editable_text_slots_for_agent(
@@ -1301,7 +1421,8 @@ def compact_editable_text_slots_for_agent(
     The public id is deliberately local to one ``weekly_report`` context:
     ``s1``, ``s2`` ... map by ordinal to the server-side slot manifest.  The
     long deterministic internal slot id, offsets and HTML path never cross the
-    MCP boundary.  ``loc`` is advisory only and is omitted when unavailable.
+    MCP boundary. ``loc`` is the compact structural context used by the Agent
+    for semantic routing and is omitted when unavailable.
     """
     layout_by_slot: dict[str, dict[str, Any]] = {}
     layout_status = "not_requested"
@@ -1324,7 +1445,7 @@ def compact_editable_text_slots_for_agent(
             "id": f"s{index}",
             "text": slot.text,
         }
-        location = _compact_slot_location({"layout_context": layout_context})
+        location = _compact_slot_location({"layout_context": layout_context, "text": slot.text})
         if location is not None:
             item["loc"] = location
         compact.append(item)
@@ -1340,6 +1461,10 @@ def editable_slot_manifest_sha256(slots: list[EditableTextSlot]) -> str:
                 str(slot.end),
                 "/".join(slot.html_path),
                 slot.raw_text,
+                "\x1e".join(
+                    f"{fragment.start}:{fragment.end}:{'/'.join(fragment.html_path)}:{fragment.raw_text}"
+                    for fragment in slot.fragments
+                ),
             ]
         )
         for slot in slots
@@ -1367,6 +1492,7 @@ def apply_editable_text_slot_changes(
     by_id = {slot.slot_id: slot for slot in slots}
     seen: set[str] = set()
     replacements: list[tuple[int, int, str, str]] = []
+    changed_slot_ids: list[str] = []
     unchanged = 0
 
     for index, raw_change in enumerate(changes):
@@ -1404,7 +1530,34 @@ def apply_editable_text_slot_changes(
             unchanged += 1
             continue
         escaped = html.escape(new_text, quote=False)
-        replacements.append((slot.start, slot.end, escaped, slot_id))
+        fragments = slot.fragments or (
+            EditableTextFragment(
+                raw_text=slot.raw_text,
+                start=slot.start,
+                end=slot.end,
+                html_path=slot.html_path,
+            ),
+        )
+        if len(fragments) == 1:
+            replacements.append((fragments[0].start, fragments[0].end, escaped, slot_id))
+        else:
+            # Preserve every original tag/attribute. Put the rewritten semantic
+            # text into the least formatting-sensitive physical fragment and
+            # clear only the other text cores. This avoids DOM reserialization
+            # and keeps Outlook/VML structure byte-for-byte unchanged.
+            formatting_tags = {"b", "strong", "i", "em", "u", "s", "sup", "sub", "a"}
+            anchor_index = min(
+                range(len(fragments)),
+                key=lambda item: (
+                    sum(1 for tag in fragments[item].html_path if tag in formatting_tags),
+                    -len(_slot_display_text(fragments[item].raw_text).strip()),
+                    item,
+                ),
+            )
+            for fragment_index, fragment in enumerate(fragments):
+                replacement = escaped if fragment_index == anchor_index else ""
+                replacements.append((fragment.start, fragment.end, replacement, slot_id))
+        changed_slot_ids.append(slot_id)
 
     updated = template_html
     for start, end, escaped, _slot_id in sorted(replacements, reverse=True):
@@ -1414,9 +1567,9 @@ def apply_editable_text_slot_changes(
     return TextSlotApplyResult(
         html=updated,
         requested_changes=len(changes),
-        applied_changes=len(replacements),
+        applied_changes=len(changed_slot_ids),
         unchanged_changes=unchanged,
         slot_count=len(slots),
-        changed_slot_ids=tuple(item[3] for item in replacements),
+        changed_slot_ids=tuple(changed_slot_ids),
         html_validation=validation,
     )

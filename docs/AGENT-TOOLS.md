@@ -1,4 +1,4 @@
-# Agent tool surface — v0.8.3
+# Agent tool surface — v0.9.0
 
 Normal Agents use the compact production stdio server. The debug server is reserved for deterministic EWS troubleshooting and DT.
 
@@ -28,7 +28,8 @@ Independent identity resolution  → resolve_people
 Mail draft create/reply/forward  → save_mail_draft
 Draft edit/attachments           → edit_mail_draft
 Workflow continuation            → continue_action
-Weekly report                    → weekly_report → continue_action
+Weekly report (direct)           → weekly_report(request=...) → continue_action
+Weekly report (from other mail)  → search_mail/read_mail → LLM summary → weekly_report(request=...) → continue_action
 Calendar read                    → read_calendar
 Find meeting time                → find_meeting_times
 Create/update unsent meeting     → save_meeting
@@ -37,15 +38,15 @@ Send saved invitation            → send_meeting_invitation
 
 ## Weekly-report contract
 
-For every new weekly-report request call `weekly_report`. The tool reads three weeks total and returns compact Agent-safe JSON only: `resume_token`, server-selected `mode`, the server-selected default draft `subject`, user `request`, short-ID `slots`, and the previous two weeks as `history`. HTML and internal slot identity never leave the server.
+For a direct weekly-report update, call `weekly_report(request=...)`. If the user first wants other people's reports summarized, use `search_mail`/`read_mail`, summarize those messages with the LLM, then call `weekly_report` with that summary as `request`. Do not pass the original meta-instruction to search/summarize as the weekly `request`. The tool reads three weeks total and returns compact Agent-safe JSON only: `resume_token`, server-selected `mode`, the server-selected default draft `subject`, user `request`, fixed routing `instructions`, short-ID `slots`, and the previous two weeks as `history`. HTML and internal slot identity never leave the server.
 
 Slot shape:
 
 ```json
-{"id":"s7","text":"完成接口开发","loc":"项目A / 本周进展"}
+{"id":"s7","text":"完成接口开发","loc":"周报（纵向表头） = nl2sql项目（横向表头） > 项目进展（二级纵向表头）"}
 ```
 
-`loc` is optional and advisory only. The actual write mapping remains server-side. IDs are local to the current `resume_token`; copy them exactly and never invent them.
+`loc` is optional and advisory only. Every text node inside `loc` carries its explicit table position/level in parentheses. Example: `周报（纵向表头） = nl2sql项目（横向表头） > 项目进展（二级纵向表头）`. `=` joins the primary vertical/column header and primary horizontal/row header at the content intersection; `>` continues into a more specific header level. The Agent should understand the real header text before the parentheses and use the parenthesized axis/level to understand hierarchy and disambiguate. `slot.text` is the actual editable content at the end of that structural path. The server does not emit a semantic `role` or duplicate `context` object. The actual write mapping remains server-side. IDs are local to the current `resume_token`; copy them exactly and never invent them.
 
 After deciding changes, call:
 

@@ -402,7 +402,7 @@ def reply_to_email(
 
 def get_weekly_report_context(
     *,
-    user_input: str,
+    request: str,
     reference_materials: list[dict[str, str]] | None = None,
     subject_contains: str = "周报",
     folder: str = "sentitems",
@@ -411,7 +411,7 @@ def get_weekly_report_context(
     max_reports: int = 3,
 ) -> dict[str, Any]:
     return configured_workflow().get_weekly_report_context(
-        user_input=user_input,
+        request=request,
         reference_materials=reference_materials,
         subject_contains=subject_contains,
         folder=folder,
@@ -423,7 +423,7 @@ def get_weekly_report_context(
 
 def weekly_report(
     *,
-    user_input: str,
+    request: str,
     reference_materials: list[dict[str, str]] | None = None,
     subject_contains: str = "周报",
     folder: str = "sentitems",
@@ -432,7 +432,7 @@ def weekly_report(
 ) -> dict[str, Any]:
     """Agent-facing weekly-report entry point; Exchange read-only in step one."""
     return get_weekly_report_context(
-        user_input=user_input,
+        request=request,
         reference_materials=reference_materials,
         subject_contains=subject_contains,
         folder=folder,

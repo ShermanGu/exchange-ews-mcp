@@ -1,4 +1,4 @@
-# Exchange EWS MCP v0.8.3
+# Exchange EWS MCP v0.9.0
 
 **English** | [简体中文](README.zh-CN.md)
 
@@ -20,7 +20,7 @@ Tired of copying last week's report? Digging through old mail before every reply
 
 - 📧 Search mail, compose drafts, reply, forward, edit drafts, add attachments.
 - 👥 Resolve recipients from full pinyin names or complete email addresses.
-- 📝 Update weekly reports while preserving the original Outlook HTML layout.
+- 📝 Update weekly reports while preserving the original Outlook HTML layout, including reports synthesized from other people's weekly-report emails.
 - 📅 Check availability, find common time, create/edit meetings, and send invitations after confirmation.
 - 🔐 Store passwords in Windows Credential Manager.
 - 🛡️ Draft-first workflows keep the final send under user control.
@@ -148,7 +148,7 @@ You can also run:
 .\.venv\Scripts\exchange-ews-mcp.exe tool-list
 ```
 
-Expected version: `0.8.3` · Production tools: `11`
+Expected version: `0.9.0` · Production tools: `11`
 
 🎉 Done — your Agent can now work with Exchange.
 
@@ -156,6 +156,10 @@ Expected version: `0.8.3` · Production tools: `11`
 
 ```text
 Find my latest weekly report and update it with this week's progress.
+```
+
+```text
+Summarize the weekly reports A and B sent me, then use that summary to generate my new weekly-report draft.
 ```
 
 ```text
@@ -180,16 +184,20 @@ The compact mail facade uses `search_mail`, `read_mail`, `resolve_people`, `save
 ## 📝 Weekly reports
 
 ```text
-Previous report
-      ↓
-Read recent history
-      ↓
-Agent decides what changed
-      ↓
-Update only relevant text
-      ↓
-Create an unsent Reply All or fresh Compose draft
+Direct user update ───────────────┐
+                                   ├→ weekly_report(request=...)
+search_mail/read_mail → LLM summary ┘
+                                   ↓
+                         Read recent history + slots
+                                   ↓
+                         Agent routes request by loc
+                                   ↓
+                         Update only relevant text
+                                   ↓
+                  Create an unsent Reply All or Compose draft
 ```
+
+For aggregation prompts, the Agent first searches/reads the source reports and summarizes them; that summary becomes the `request` passed to `weekly_report`. The tool itself does not search other users' mail.
 
 The Agent does **not** regenerate the whole HTML template. The server keeps the existing layout and updates approved text slots only. The Agent receives three weeks of context total (current editable report plus two prior reports), uses short local slot IDs such as `s1`, and the server automatically advances supported Subject date/week markers for the next draft.
 

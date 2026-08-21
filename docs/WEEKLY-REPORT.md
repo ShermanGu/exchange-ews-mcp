@@ -1,4 +1,4 @@
-# Weekly-report workflow — v0.8.3
+# Weekly-report workflow — v0.9.0
 
 The weekly-report design separates **semantic understanding** from **deterministic HTML editing**. The Agent decides wording. The server owns HTML, slot mapping, validation, Exchange state, and draft creation.
 
@@ -22,6 +22,24 @@ unsent Reply All or Compose draft
 
 `update_weekly_report` remains an internal workflow primitive and is not registered as an MCP tool.
 
+## Request preparation
+
+`weekly_report` has one required Agent-facing semantic input: `request`. It is the **final set of facts/instructions that should be absorbed into the new weekly report**, not necessarily the user's original sentence.
+
+Two supported paths converge on the same tool call:
+
+```text
+Direct update:
+user facts → weekly_report(request=<user facts>)
+
+Aggregate other reports:
+search_mail → read_mail → LLM summary → weekly_report(request=<summary>)
+```
+
+For a prompt such as “summarize A and B's weekly reports and generate mine”, the Agent must finish the mail search/read and LLM summarization first. It then passes only the useful synthesized weekly facts as `request`. The meta-instruction to “search/summarize A and B” must not be copied into `request`, and `weekly_report` itself does not search other users' messages.
+
+The summary should preserve project/topic, current progress, next-step plans, risks/issues, and other facts needed by slot routing; duplicate or conversational mail text should be condensed before the weekly-report stage.
+
 ## `weekly_report` result
 
 The Agent-facing tool always reads at most **three weekly mails total**. The newest report is represented by editable `slots`; only the previous two reports are returned as `history`, so the newest report is not duplicated.
@@ -34,10 +52,11 @@ Typical result:
   "mode": "reply_all",
   "subject": "项目周报 2026-08-03 至 2026-08-09",
   "request": "项目A完成联调，下周做性能测试",
+  "instructions": "先拆分独立事实，再按 loc 的显式表头层级路由；例如周报（纵向表头） = nl2sql项目（横向表头） > 项目进展（二级纵向表头）...",
   "slots": [
-    {"id":"s1","text":"日期：2026-08-03 至 2026-08-09","loc":"周报周期"},
-    {"id":"s2","text":"完成接口联调","loc":"项目A / 本周进展"},
-    {"id":"s3","text":"开展性能测试","loc":"项目A / 下周计划"}
+    {"id":"s1","text":"日期：2026-08-03 至 2026-08-09"},
+    {"id":"s2","text":"完成接口联调","loc":"周报（纵向表头） = 项目A（横向表头） > 本周进展（二级纵向表头）"},
+    {"id":"s3","text":"开展性能测试","loc":"周报（纵向表头） = 项目A（横向表头） > 下周计划（二级纵向表头）"}
   ],
   "history": [
     {"subject":"项目周报 2026-07-27 至 2026-08-02","text":"..."},
@@ -48,7 +67,7 @@ Typical result:
 
 If a historical item cannot be extracted, a compact `warnings` field may also be returned. Dynamic `agent_prompt`, HTML, Exchange item IDs, offsets, hashes, To/CC, TTL metadata, and long internal slot IDs are not returned.
 
-`loc` is optional. It is an advisory semantic hint only and never participates in write positioning.
+`loc` is optional and advisory only; it never participates in deterministic write positioning. Every text node in the path carries an explicit structural label in parentheses. Example: `周报（纵向表头） = nl2sql项目（横向表头） > 项目进展（二级纵向表头）`. `=` marks the primary vertical/column-header and horizontal/row-header intersection, while `>` continues into a more specific header level. The editable content itself stays in `slot.text` and is not duplicated at the end of `loc`. The server does not emit a semantic `role` or duplicate `context` object.
 
 ## Short slot IDs
 
@@ -70,7 +89,7 @@ The Agent must copy an `id` exactly from the current `weekly_report` result and 
 
 ## Fixed Agent rules
 
-The fixed behavioral rules live in the `weekly_report` MCP tool description rather than in a dynamic prompt returned on every call:
+The behavioral rules live in the `weekly_report` MCP tool description and the compact `instructions` string returned with the current context. `request` may be direct user input or an Agent-prepared mail summary; after it reaches this stage both are handled identically. For slot selection the Agent must first split the request into independent facts, then match project/topic against the middle `loc` path and the intended time/status column against the final path segment. `slot.text` is only a concrete-content/tie-breaker signal; it must not cause the entire request to be copied into one slot.
 
 - user-provided current facts override history;
 - only slots that truly changed are submitted;

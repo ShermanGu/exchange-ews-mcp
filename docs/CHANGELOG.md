@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.9.0
+
+- `weekly_report` now accepts a single required Agent-facing `request` input representing the final weekly-report update request. The value may come directly from the user or from an Agent-prepared summary of previously searched/read emails.
+- Added an explicit two-stage aggregation contract: for prompts such as “summarize A/B's reports and generate mine”, the Agent must first use `search_mail`/`read_mail`, summarize the source reports with the LLM, then pass that summary as `weekly_report(request=...)`. The weekly-report tool itself does not search other users' mail.
+- The returned compact context echoes the exact normalized `request` used for slot routing. Routing still decomposes that request into independent facts before mapping them by `loc + text`; meta-instructions must not be copied into report slots.
+- Renamed the previous internal/public weekly input parameter from `user_input` to `request` across the workflow, service facade, MCP tool schema, DT, tests, and documentation so the tool contract matches its actual semantics.
+- Retains the v0.8.5 hierarchical `loc` grammar and inline-fragment slot merging without adding semantic `role` or duplicate context fields.
+
+## 0.8.5
+
+- Weekly Report `loc` now preserves explicit structural identity on every path node instead of the generic `Section > Topic > Column` shorthand. A typical multi-level table location is `周报（纵向表头） = nl2sql项目（横向表头） > 项目进展（二级纵向表头）`; `=` marks the primary row/column-header intersection and `>` marks deeper header levels.
+- The editable content remains only in `slot.text`, so `loc` does not duplicate the replacement text. No backend semantic `role` or duplicate context object is introduced.
+- Weekly routing instructions now teach the Agent the parenthesized header-axis grammar explicitly and still require semantic decomposition before multi-slot routing, preventing whole-request copy into a single slot.
+- Added an exact regression fixture for the `周报 / nl2sql项目 / 项目进展` hierarchy plus coverage that every emitted `loc` path node carries an explicit parenthesized structural label.
+
+## 0.8.4
+
+- Weekly Report editable slots now merge adjacent inline HTML text fragments inside the same semantic block, so Outlook formatting tags such as `span`, `font`, `b`, and `strong` no longer create artificially fragmented Agent slots. Server-side fragment offsets are retained so updates preserve the original HTML tags/attributes instead of DOM reserialization.
+- Agent-facing `loc` is standardized as a compact ordered path using ` > `, conceptually `Section > Topic > Column`. Missing levels are omitted and genuine multi-level headers remain as additional path segments; verbose table coordinates, neighbour prose, and backend semantic `role` classification are not exposed.
+- Weekly Report routing instructions now require semantic decomposition of the user request before slot selection, comparison across all candidate slots, Topic-first then Column matching from `loc`, and `slot.text` only as a concrete-content/tie-breaker signal. One request may update multiple slots; unrelated facts may not be copied wholesale into one slot.
+- Added regression coverage for inline-fragment merging, multi-paragraph boundaries, preservation of original inline HTML structure, hierarchical `loc` paths including Outlook-style multi-level `td` headers, and the strengthened multi-slot routing contract.
+
 ## 0.8.3
 
 - Release metadata/docs synchronized to v0.8.3; CI artifact naming and generated distribution checksum manifest are included in the release gate.

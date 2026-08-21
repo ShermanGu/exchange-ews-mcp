@@ -1,4 +1,4 @@
-# Live Exchange development tests — v0.8.3
+# Live Exchange development tests — v0.9.0
 
 DT runs against a user-owned Exchange mailbox and is intentionally separate from CI/unit tests.
 

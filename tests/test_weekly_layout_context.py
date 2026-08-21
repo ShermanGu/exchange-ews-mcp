@@ -95,16 +95,28 @@ def test_nested_tables_have_independent_ids_and_outer_cell_context() -> None:
     assert "阶段" in table["outer_cell_text"]
 
 
-def test_multiple_slots_in_same_cell_share_cell_context() -> None:
+def test_inline_fragments_in_same_cell_become_one_semantic_slot() -> None:
     html = "<table><tr><th>进展</th></tr><tr><td><span>完成开发</span><span>并完成测试</span></td></tr></table>"
+    raw = extract_editable_text_slots(html)
+    merged = next(slot for slot in raw if slot.text == "完成开发并完成测试")
+    assert len(merged.fragments) == 2
     slots = _slots(html)
-    first = slots["完成开发"]["layout_context"]["table_context"]
-    second = slots["并完成测试"]["layout_context"]["table_context"]
-    assert first["cell_id"] == second["cell_id"]
-    assert first["cell_text"] == "完成开发 并完成测试"
-    assert first["cell_slot_count"] == 2
-    assert first["slot_index_in_cell"] == 0
-    assert second["slot_index_in_cell"] == 1
+    table = slots["完成开发并完成测试"]["layout_context"]["table_context"]
+    assert table["cell_text"] == "完成开发并完成测试"
+    assert table["cell_slot_count"] == 1
+    assert table["slot_index_in_cell"] == 0
+
+
+def test_multiple_paragraphs_in_same_cell_remain_separate_semantic_slots() -> None:
+    html = "<table><tr><td><p><span>完成开发</span><span>并完成测试</span></p><p>下周回归</p></td></tr></table>"
+    texts = [slot.text for slot in extract_editable_text_slots(html)]
+    assert texts == ["完成开发并完成测试", "下周回归"]
+
+
+def test_bold_inline_label_is_not_merged_with_following_content() -> None:
+    html = "<p><b>项目A：</b><span>完成接口开发</span><span>并通过测试</span></p>"
+    texts = [slot.text for slot in extract_editable_text_slots(html)]
+    assert texts == ["项目A：", "完成接口开发并通过测试"]
 
 
 def test_empty_image_cell_still_preserves_logical_column_coordinates() -> None:
@@ -211,16 +223,31 @@ def test_compact_slots_keep_only_model_critical_fields() -> None:
         for item in compact_editable_text_slots_for_agent(raw, template_html=html)
     }
     assert set(compact["完成联调"]) == {"id", "text", "loc"}
-    assert compact["完成联调"]["loc"] == (
-        "表格位置：第2行第2列；行表头：项目A；列表头：本周进展；右邻：性能测试"
-    )
-    assert compact["性能测试"]["loc"] == (
-        "表格位置：第2行第3列；行表头：项目A；列表头：下周计划；左邻：完成联调"
-    )
+    assert set(compact["性能测试"]) == {"id", "text", "loc"}
+    assert set(compact["项目A"]) == {"id", "text", "loc"}
+    assert all("role" not in item for item in compact.values())
+    assert compact["完成联调"]["loc"] == "本周进展（纵向表头） = 项目A（横向表头）"
+    assert compact["性能测试"]["loc"] == "下周计划（纵向表头） = 项目A（横向表头）"
     assert "layout_context" not in compact["完成联调"]
     assert "previous_text" not in compact["完成联调"]
     assert "next_text" not in compact["完成联调"]
     assert "html_path" not in compact["完成联调"]
+
+
+def test_compact_slot_location_marks_every_header_with_explicit_axis() -> None:
+    html = (
+        "<h2>重点工作</h2>"
+        "<table><tr><th>项目</th><th>本周进展</th></tr>"
+        "<tr><td>Exchange MCP</td><td><span>完成</span><font>slot 优化</font></td></tr></table>"
+    )
+    compact = {
+        item["text"]: item
+        for item in compact_editable_text_slots_for_agent(
+            extract_editable_text_slots(html), template_html=html
+        )
+    }
+    assert compact["完成slot 优化"]["loc"] == "本周进展（纵向表头） = Exchange MCP（横向表头）"
+    assert "重点工作" not in compact["完成slot 优化"]["loc"]
 
 
 def test_compact_slot_location_is_nullable_and_bounded() -> None:
@@ -263,11 +290,30 @@ def test_compact_location_exposes_outlook_td_double_header_candidates() -> None:
     progress_location = compact["完成联调"]["loc"]
     plan_location = compact["性能测试"]["loc"]
     assert isinstance(progress_location, str)
-    assert "列表头：工作内容" in progress_location
-    assert "列表头候选：本周进展" in progress_location
-    assert "行表头：项目A" in progress_location
-    assert "列表头候选：下周计划" in plan_location
-    assert "左邻：完成联调" in plan_location
+    assert progress_location == "工作内容（纵向表头） = 项目A（横向表头） > 本周进展（二级纵向表头）"
+    assert plan_location == "工作内容（纵向表头） = 项目A（横向表头） > 下周计划（二级纵向表头）"
+
+def test_compact_location_matches_explicit_weekly_header_hierarchy_example() -> None:
+    html = (
+        '<table><thead><tr><th rowspan="2">项目</th><th colspan="2">周报</th></tr>'
+        '<tr><th>项目进展</th><th>下周计划</th></tr></thead>'
+        '<tbody><tr><td>nl2sql项目</td><td>完成NL2SQL优化</td><td>开展验证</td></tr></tbody></table>'
+    )
+    compact = {
+        item["text"]: item
+        for item in compact_editable_text_slots_for_agent(
+            extract_editable_text_slots(html), template_html=html
+        )
+    }
+    assert compact["完成NL2SQL优化"]["loc"] == (
+        "周报（纵向表头） = nl2sql项目（横向表头） > 项目进展（二级纵向表头）"
+    )
+    assert compact["开展验证"]["loc"] == (
+        "周报（纵向表头） = nl2sql项目（横向表头） > 下周计划（二级纵向表头）"
+    )
+    for node in compact["完成NL2SQL优化"]["loc"].replace(" = ", " > ").split(" > "):
+        assert "（" in node and node.endswith("）")
+
 
 def test_compact_slot_payload_is_far_smaller_than_internal_layout_payload() -> None:
     rows = [
