@@ -633,13 +633,19 @@ class EwsClient:
     def __init__(
         self,
         config: AppConfig,
-        password: str,
+        password: str | None,
         *,
         session: Session | None = None,
     ) -> None:
         self.config = config
         self.session = session or requests.Session()
-        self.session.auth = HttpNtlmAuth(config.username, password)
+        if password is None:
+            # Windows 集成认证：SSPI 默认凭据（当前登录身份），无需存储密码。
+            from requests_negotiate_sspi import HttpNegotiateAuth
+
+            self.session.auth = HttpNegotiateAuth()
+        else:
+            self.session.auth = HttpNtlmAuth(config.username, password)
         self.session.headers.update(
             {
                 "Content-Type": "text/xml; charset=utf-8",
@@ -660,7 +666,10 @@ class EwsClient:
             raise EwsError(f"连接 EWS 失败：{exc}") from exc
 
         if response.status_code == 401:
-            raise EwsError("EWS 返回 401：用户名、密码或 NTLM 账号格式不正确。")
+            raise EwsError(
+                "EWS 返回 401：用户名、密码或 NTLM 账号格式不正确。"
+                "（若使用 SSPI 集成认证，请确认本机进程运行在域账号下。）"
+            )
         if response.status_code == 403:
             raise EwsError("EWS 返回 403：账号可能没有执行此操作的权限。")
         try:
@@ -688,7 +697,12 @@ class EwsClient:
             except ET.ParseError:
                 pass
             raise EwsError(
-                f"EWS HTTP 错误 {response.status_code}: {detail or '无响应正文'}",
+                f"EWS HTTP 错误 {response.status_code}: {detail or '无响应正文'}"
+                + (
+                    "（排查建议：遇到无法解释的 500，可先确认域账号状态正常——密码过期、账号锁定均会导致请求失败。）"
+                    if response.status_code == 500
+                    else ""
+                ),
                 response_code=code_value,
             ) from exc
         return response

@@ -125,6 +125,14 @@ def configure(args: argparse.Namespace) -> int:
     default_username = current.username if current else ""
     ews_url = input(f"EWS URL [{default_url}]: ").strip() or default_url
     username = input(f"NTLM 用户名 [{default_username}]: ").strip() or default_username
+    auth_input = (
+        input("认证方式：1) Windows 集成认证（SSPI，免密码，用当前登录身份） 2) 账号密码（存系统凭据库） [1]: ")
+        .strip()
+        or "1"
+    )
+    if auth_input not in {"1", "2"}:
+        raise ValueError("认证方式只能选 1 或 2。")
+    auth_mode = "sspi" if auth_input == "1" else "ntlm"
     default_domains = ",".join(effective_company_domains(current)) if current else ""
     domain_input = input(
         f"公司邮箱域名（如 company.com，可逗号分隔） [{default_domains}]: "
@@ -160,11 +168,14 @@ def configure(args: argparse.Namespace) -> int:
     default_interval = current.calendar_slot_interval_minutes if current else 30
     interval_text = input(f"会议候选时间粒度（分钟） [{default_interval}]: ").strip()
     calendar_slot_interval_minutes = int(interval_text) if interval_text else default_interval
-    password = getpass.getpass("公司邮箱密码（不会显示）: ")
+    password: str | None = None
+    if auth_mode == "ntlm":
+        password = getpass.getpass("公司邮箱密码（不会显示）: ")
 
     config = AppConfig(
         ews_url=ews_url,
         username=username,
+        auth_mode=auth_mode,
         verify_tls=verify_tls,
         timeout_seconds=args.timeout,
         exchange_version=args.exchange_version,
@@ -185,10 +196,14 @@ def configure(args: argparse.Namespace) -> int:
         inbox_name = EwsClient(config, password).test_connection()
         print(f"认证成功，已访问邮箱文件夹：{inbox_name}")
 
-    store_password(username, password)
+    if auth_mode == "ntlm":
+        store_password(username, password)
     path = save_config(config)
     print(f"配置已保存：{path}")
-    print("密码已保存到系统凭据库（Windows 上为 Credential Manager）。")
+    if auth_mode == "ntlm":
+        print("密码已保存到系统凭据库（Windows 上为 Credential Manager）。")
+    else:
+        print("SSPI 集成认证：不存储密码，随当前 Windows 登录身份生效。")
     return 0
 
 
@@ -220,7 +235,10 @@ def set_current_user(args: argparse.Namespace) -> int:
 
 def status(_: argparse.Namespace) -> int:
     config = load_config()
-    get_password(config.username)
+    credential_label = "windows-integrated (SSPI)"
+    if config.auth_mode != "sspi":
+        get_password(config.username)
+        credential_label = "available-in-system-keyring"
     _print_json(
         {
             "configured": True,
@@ -245,7 +263,7 @@ def status(_: argparse.Namespace) -> int:
                 "workdays": config.calendar_workdays or [0, 1, 2, 3, 4],
                 "slot_interval_minutes": config.calendar_slot_interval_minutes,
             },
-            "credential": "available-in-system-keyring",
+            "credential": credential_label,
         }
     )
     return 0

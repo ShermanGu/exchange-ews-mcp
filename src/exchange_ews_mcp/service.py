@@ -19,6 +19,9 @@ from .state_store import ReferenceStore
 
 def configured_client() -> EwsClient:
     config = load_config()
+    if config.auth_mode == "sspi":
+        # Windows 集成认证：不读凭据库，直接用当前登录身份。
+        return EwsClient(config, None)
     password = get_password(config.username)
     return EwsClient(config, password)
 
