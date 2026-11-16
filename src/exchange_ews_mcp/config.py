@@ -18,6 +18,7 @@ CONFIG_FILENAME = "config.json"
 class AppConfig:
     ews_url: str
     username: str
+    auth_mode: str = "ntlm"
     verify_tls: bool = True
     timeout_seconds: int = 30
     exchange_version: str = "Exchange2010_SP2"
@@ -42,6 +43,8 @@ class AppConfig:
             raise ConfigurationError("EWS URL 通常应以 /EWS/Exchange.asmx 结尾。")
         if not self.username.strip():
             raise ConfigurationError("用户名不能为空。")
+        if self.auth_mode not in {"ntlm", "sspi"}:
+            raise ConfigurationError("auth_mode 只允许 ntlm 或 sspi。")
         if self.timeout_seconds <= 0:
             raise ConfigurationError("timeout_seconds 必须大于 0。")
         if self.max_attachment_bytes <= 0:
